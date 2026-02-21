@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 import io
-import re
 
 # --- 기본 설정 ---
 KST = pytz.timezone('Asia/Seoul')
@@ -16,8 +15,27 @@ PER_DIEM_RATES = {
     "DEL": 2.50, "BOM": 2.50, "MLE": 2.50, "KUL": 2.32, "SGN": 2.32, "GUM": 3.28, "HKG": 2.35, "TPE": 2.20, "MFM": 2.20, "ULN": 1.95, "DXB": 2.59
 }
 
+# --- 헬퍼 함수: 강력한 문자열 클리너 ---
+def clean_str(val):
+    """nan, float, 빈 공백 등을 완벽하게 빈 문자열로 변환"""
+    if pd.isna(val): return ""
+    s = str(val).strip()
+    if s.lower() == 'nan': return ""
+    return s
+
+def is_valid_name(text):
+    """이름인지 확인하는 강력한 필터 (P1, P2, 숫자 제외)"""
+    if not text: return False
+    # 1. 숫자만 있는 경우(사번) 제외
+    if text.replace('.', '').isdigit(): return False
+    # 2. 짧은 코드(P1, P2, F1, F2, CAP, FO) 제외
+    if text.upper() in ['P1', 'P2', 'F1', 'F2', 'CAP', 'FO']: return False
+    # 3. 길이가 너무 짧은 경우 제외 (이름은 보통 2글자 이상)
+    if len(text) < 2: return False
+    return True
+
 def get_rate(city):
-    city = str(city).strip()
+    city = clean_str(city)
     if city in PER_DIEM_RATES: return PER_DIEM_RATES[city]
     if any(jp in city for jp in ["NRT", "HND", "KIX", "NGO", "FUK", "CTS"]): return 2.72
     if any(cn in city for cn in ["PEK", "PVG", "CAN", "SZX"]): return 1.95
@@ -30,7 +48,7 @@ def format_dur(delta):
 
 # --- UI ---
 st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
-st.title("✈️ KAL B787 구글 캘린더 CSV 변환기 (Fix)")
+st.title("✈️ KAL B787 로스터 CSV 변환기 (v1.8)")
 
 rank = st.radio("직책 선택 (Per Diem 계산용)", ["CAP (기장)", "FO (부기장)"], horizontal=True)
 is_cap = True if "CAP" in rank else False
@@ -58,71 +76,69 @@ if up_file:
             st.error("'Flight/Activity' 행을 찾을 수 없습니다.")
             st.stop()
 
-        # 헤더 적용 (공백 제거)
-        df.columns = df.iloc[h_idx].str.strip()
+        # 헤더 적용
+        df.columns = df.iloc[h_idx].apply(clean_str) # 헤더도 clean_str 적용
         data = df.iloc[h_idx+1:].reset_index(drop=True)
 
         curr = None
         for _, row in data.iterrows():
             # 1. 비행 정보 추출
-            f_val = str(row.get('Flight/Activity', '')).strip()
-            # 'Total' 행이나 nan 값 제외
-            if f_val != "" and f_val.lower() != "nan" and not f_val.startswith('Total'):
+            f_val = clean_str(row.get('Flight/Activity', ''))
+            
+            # 유효한 비행 편명인지 확인
+            if f_val and not f_val.startswith('Total'):
                 if curr: flights.append(curr)
                 try:
                     std = KST.localize(datetime.strptime(str(row['STD']), '%Y-%m-%d %H:%M'))
                     sta = KST.localize(datetime.strptime(str(row['STA']), '%Y-%m-%d %H:%M'))
-                    curr = {"flt": f_val, "dep": str(row['From']).strip(), "arr": str(row['To']).strip(), "std": std, "sta": sta, "ac": str(row['A/C']).strip(), "crews": []}
+                    curr = {
+                        "flt": f_val, 
+                        "dep": clean_str(row.get('From')), 
+                        "arr": clean_str(row.get('To')), 
+                        "std": std, "sta": sta, 
+                        "ac": clean_str(row.get('A/C')), 
+                        "crews": []
+                    }
                 except: continue
             
-            # 2. Crew 이름 추출 (강화된 로직)
-            c_id = str(row.get('Crew ID', '')).strip()
+            # 2. Crew 정보 추출 (여기가 핵심 개선 포인트!)
+            # 먼저 Crew ID(사번)를 찾음
+            c_id = clean_str(row.get('Crew ID'))
             
-            # 사번이 있는 행만 처리 (유효한 승무원 데이터로 간주)
-            if c_id and c_id.lower() != "nan" and c_id.isdigit():
+            # 사번이 존재하고 숫자여야 함 (유효한 크루 행)
+            if c_id and c_id.isdigit():
                 name = ""
-                # 해당 행의 모든 값을 리스트로 가져옴
-                row_values = [str(x).strip() for x in row.values]
                 
-                # 사번 위치 찾기
-                if c_id in row_values:
-                    id_idx = row_values.index(c_id)
-                    # 사번 뒤 5칸까지 뒤져서 "진짜 이름" 찾기
-                    for i in range(1, 6):
-                        if id_idx + i < len(row_values):
-                            candidate = row_values[id_idx + i]
-                            # 조건: nan 아니고, 공백 아니고, 숫자만 있는게 아니고(사번중복방지), 길이가 2 이상
-                            if (candidate.lower() != "nan" and 
-                                candidate != "" and 
-                                not candidate.isdigit() and 
-                                len(candidate) >= 2):
-                                name = candidate
-                                break
-                
-                # 만약 위 로직으로 못 찾았으면 'Name' 컬럼 확인
-                if name == "":
-                    raw_name = str(row.get('Name', '')).strip()
-                    if raw_name.lower() != "nan" and raw_name != "" and not raw_name.isdigit():
-                        name = raw_name
-
-                # 최종 저장 (이름이 찾아졌을 경우만)
-                if curr and name:
-                    r_val = str(row.get('Acting rank', '')).strip()
-                    p_val = str(row.get('PIC code', '')).strip()
+                # A. 먼저 'Name' 컬럼을 봅니다.
+                raw_name = clean_str(row.get('Name'))
+                if is_valid_name(raw_name):
+                    name = raw_name
+                else:
+                    # B. 'Name' 컬럼이 비었거나 이상하면(P1 등), 행 전체를 뒤집니다.
+                    # 행의 모든 값을 리스트로 변환
+                    row_vals = [clean_str(x) for x in row.values]
                     
-                    # --- Special Duty Code 완벽 제거 로직 ---
-                    sdc_raw = row.get('Special Duty Code', '')
-                    if pd.isna(sdc_raw):
-                        sdc_str = ""
-                    else:
-                        sdc = str(sdc_raw).strip()
-                        # nan 문자열, 빈 문자열, 점(.) 등을 모두 체크
-                        if sdc.lower() == 'nan' or sdc == '' or sdc == '.':
-                            sdc_str = ""
-                        else:
-                            sdc_str = f" [{sdc}]"
-                    # --------------------------------------
-
+                    # 사번(c_id)의 위치를 찾음
+                    if c_id in row_vals:
+                        idx = row_vals.index(c_id)
+                        # 사번 오른쪽으로 5칸까지 탐색
+                        for i in range(1, 6):
+                            if idx + i < len(row_vals):
+                                candidate = row_vals[idx + i]
+                                if is_valid_name(candidate):
+                                    name = candidate
+                                    break
+                
+                # 이름을 찾았을 때만 리스트에 추가
+                if curr and name:
+                    r_val = clean_str(row.get('Acting rank'))
+                    p_val = clean_str(row.get('PIC code'))
+                    
+                    # Special Duty Code 처리 (완벽한 nan 제거)
+                    sdc = clean_str(row.get('Special Duty Code'))
+                    sdc_str = f" [{sdc}]" if sdc else ""
+                    
+                    # 이름 (사번, 직책, P코드) [SDC] 형식
                     curr['crews'].append(f"{name} ({c_id}, {r_val}, {p_val}){sdc_str}")
 
         if curr: flights.append(curr)

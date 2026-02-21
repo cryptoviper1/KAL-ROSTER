@@ -105,9 +105,52 @@ def parse_time_input(t_str):
         except: return None
     return None
 
+def get_smart_date(base_date, input_day):
+    try:
+        input_day = int(input_day)
+        target_date = base_date.replace(day=input_day, hour=0, minute=0, second=0)
+        # 같은 달로 고정 (사용자 요청 반영)
+        return target_date
+    except:
+        return base_date
+
+# [NEW] ICS 파일 생성 함수 (모바일용)
+def generate_ics(events):
+    ics_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KAL Roster//KR",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH"
+    ]
+    
+    dt_now = datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')
+    
+    for evt in events:
+        # UTC 시간으로 변환
+        start_dt = evt['start_dt'].astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')
+        end_dt = evt['end_dt'].astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')
+        
+        # 줄바꿈 처리 (\n을 \\n으로 변경하여 ICS 포맷 맞춤)
+        desc = evt['description'].replace('\n', '\\n')
+        
+        ics_lines.append("BEGIN:VEVENT")
+        ics_lines.append(f"DTSTART:{start_dt}")
+        ics_lines.append(f"DTEND:{end_dt}")
+        ics_lines.append(f"DTSTAMP:{dt_now}")
+        ics_lines.append(f"UID:{start_dt}-{evt['subject'].replace(' ', '')}@kalroster")
+        ics_lines.append(f"SUMMARY:{evt['subject']}")
+        ics_lines.append(f"DESCRIPTION:{desc}")
+        ics_lines.append(f"LOCATION:{evt['location']}")
+        ics_lines.append("END:VEVENT")
+        
+    ics_lines.append("END:VCALENDAR")
+    return "\r\n".join(ics_lines)
+
+
 # --- UI ---
-st.set_page_config(page_title="KAL Roster to CSV Ver 1.1", page_icon="✈️")
-st.title("✈️ KAL Roster to CSV Ver 1.1")
+st.set_page_config(page_title="KAL Roster to CSV Ver 5.0", page_icon="✈️")
+st.title("✈️ KAL Roster to CSV Ver 5.0")
 
 rank = st.radio(
     "직책 선택 (Per Diem 계산용)", 
@@ -246,7 +289,6 @@ if up_file:
                 r_val = clean_str(row.get('Acting rank'))
                 is_instructor_row = (r_val == 'INT')
                 
-                # Instructor Check
                 if int_col_name:
                     int_val = clean_str(row.get(int_col_name))
                     if is_valid_name(int_val):
@@ -254,7 +296,6 @@ if up_file:
                          if crew_str not in flight_dict[current_key]['crews']:
                             flight_dict[current_key]['crews'].append(crew_str)
 
-                # Crew Check
                 if (c_id and c_id.isdigit()) or is_instructor_row:
                     name = ""
                     raw_name = clean_str(row.get('Name'))
@@ -304,14 +345,16 @@ if up_file:
                 rots.append(t_rot); t_rot = []
         if t_rot: rots.append(t_rot)
 
+        # 이벤트를 모을 리스트 (ICS 생성을 위해)
+        all_events = []
+
         csv_rows = []
-        # [수정] 파일의 '첫 비행' 날짜를 기준으로 해당 월을 고정
         if sorted_flights:
             base_date_ref = sorted_flights[0]['std_kst']
         else:
             base_date_ref = datetime.now(KST)
         
-        # 1. 리저브 (단순 일자 교체)
+        # 1. 리저브
         res_cnt = 0
         if res_input:
             for day_str in res_input.split(','):
@@ -319,6 +362,8 @@ if up_file:
                     day = int(day_str.strip())
                     start_dt = base_date_ref.replace(day=day, hour=0, minute=0, second=0)
                     end_dt = start_dt + timedelta(hours=23, minutes=59)
+                    
+                    # CSV용
                     csv_rows.append({
                         "Subject": "Reserve",
                         "Start Date": start_dt.strftime('%Y-%m-%d'),
@@ -328,10 +373,18 @@ if up_file:
                         "Description": "Reserve Schedule (All Day)",
                         "Location": "ICN"
                     })
+                    # ICS용
+                    all_events.append({
+                        "subject": "Reserve",
+                        "start_dt": start_dt,
+                        "end_dt": end_dt,
+                        "description": "Reserve Schedule (All Day)",
+                        "location": "ICN"
+                    })
                     res_cnt += 1
                 except: pass
 
-        # 2. 스탠바이 (단순 일자 교체 + 오버나이트 처리)
+        # 2. 스탠바이
         stby_cnt = 0
         if stby_data:
             for s_day, s_start, s_end in stby_data:
@@ -343,10 +396,10 @@ if up_file:
                         start_dt = base_date_ref.replace(day=day, hour=sh, minute=sm, second=0)
                         end_dt = base_date_ref.replace(day=day, hour=eh, minute=em, second=0)
                         
-                        # 종료 시간이 시작 시간보다 빠르면(22:00 -> 02:00), 다음 날로 처리
                         if end_dt < start_dt: 
                             end_dt += timedelta(days=1)
                         
+                        # CSV용
                         csv_rows.append({
                             "Subject": "STBY",
                             "Start Date": start_dt.strftime('%Y-%m-%d'),
@@ -355,6 +408,14 @@ if up_file:
                             "End Time": end_dt.strftime('%H:%M'),
                             "Description": "Standby Duty",
                             "Location": "ICN"
+                        })
+                        # ICS용
+                        all_events.append({
+                            "subject": "STBY",
+                            "start_dt": start_dt,
+                            "end_dt": end_dt,
+                            "description": "Standby Duty",
+                            "location": "ICN"
                         })
                         stby_cnt += 1
                 except: pass
@@ -412,6 +473,7 @@ if up_file:
                 memo.extend(f['crews'])
                 memo.append("")
 
+            # CSV용 데이터
             csv_rows.append({
                 "Subject": subject,
                 "Start Date": f1['std_str'][:10],
@@ -421,20 +483,62 @@ if up_file:
                 "Description": "\n".join(memo),
                 "Location": f"{f1['dep']} -> {fL['arr']}"
             })
+            
+            # ICS용 데이터 (UTC 기준 시간 객체가 필요함)
+            # CSV는 엑셀상의 로컬 시간을 쓰지만, ICS는 정확한 시간(UTC)을 써야 캘린더가 알아서 로컬로 보여줌
+            # 여기서는 편의상 f1['std_kst'] (KST)를 기준으로 사용하되, ICS 생성 함수에서 UTC로 변환함.
+            # 날짜는 f1['std_kst'] 기준, 시간은 CSV에 적힌 시간과 동일하게 맞춤
+            
+            # (중요) ICS 생성 시에는 엑셀의 시간(Local)을 KST로 가정하고 넣으면 해외에서 시간 틀어질 수 있음
+            # 따라서 가장 정확한 f1['std_kst'] (Show-up 기준 아님, 비행 시작 시간) 부터
+            # fL['sta_kst'] (도착 시간)까지로 잡아야 함.
+            # 하지만 위 코드에서 sta_kst는 구하지 않았으므로, std_kst + (sta_utc - std_utc) 로 계산 가능
+            
+            # 간편한 방법: CSV와 동일하게 KST 기준 시간을 사용 (한국 승무원 기준)
+            start_dt_obj = f1['std_kst']
+            
+            # 종료 시간 계산: 시작 시간 + (마지막 도착 UTC - 첫 출발 UTC)
+            if fL['sta_utc'] and f1['std_utc']:
+                duration = fL['sta_utc'] - f1['std_utc']
+                end_dt_obj = start_dt_obj + duration
+            else:
+                end_dt_obj = start_dt_obj + timedelta(hours=10) # 예외 처리
 
-        res_df = pd.DataFrame(csv_rows)
-        csv_buffer = res_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            all_events.append({
+                "subject": subject,
+                "start_dt": start_dt_obj,
+                "end_dt": end_dt_obj,
+                "description": "\n".join(memo),
+                "location": f"{f1['dep']} -> {fL['arr']}"
+            })
 
-        st.info("🟦 변환 완료! 아래 버튼을 눌러 다운로드를 시작하세요.")
+        # --- 버튼 UI ---
+        st.success("✅ 변환 완료!")
         st.caption(f"상세: 비행 {len(rots)}개, 리저브 {res_cnt}개, 스탠바이 {stby_cnt}개 포함됨")
         
-        if st.download_button(
-            label="변환된 파일 다운로드",
-            data=csv_buffer,
-            file_name="Google_Calendar_Import.csv",
-            mime="text/csv"
-        ):
-            st.success("✅ 다운로드 완료! (파일을 확인하세요)")
+        col_down1, col_down2 = st.columns(2)
+        
+        # 1. CSV 다운로드
+        res_df = pd.DataFrame(csv_rows)
+        csv_buffer = res_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        
+        with col_down1:
+            st.download_button(
+                label="📁 CSV 다운로드 (PC)",
+                data=csv_buffer,
+                file_name="Google_Calendar.csv",
+                mime="text/csv"
+            )
+
+        # 2. ICS 다운로드
+        ics_text = generate_ics(all_events)
+        with col_down2:
+            st.download_button(
+                label="📅 iCal 다운로드 (모바일)",
+                data=ics_text,
+                file_name="Roster.ics",
+                mime="text/calendar"
+            )
 
     except Exception as e:
         st.error(f"오류가 발생했습니다: {e}")

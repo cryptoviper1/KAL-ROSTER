@@ -26,28 +26,16 @@ AIRPORT_TZ = {
 KST = pytz.timezone('Asia/Seoul')
 UTC = pytz.utc
 
-# --- 2. Per Diem 단가표 (숫자만 관리) ---
 PER_DIEM_RATES = {
-    # 미주/구주 주요 도시
     "SFO": 4.21, "LAX": 4.01, "LAS": 4.01, "ANC": 3.81, "SEA": 3.81, "ATL": 3.61, "BOS": 3.61, "JFK": 3.61, "ORD": 3.41, "HNL": 3.41,
-    "DFW": 3.21, "MIA": 3.21, "LCK": 3.21, "IAD": 3.01, "SCL": 3.19, "YVR": 3.19, "YYZ": 3.00,
-    
-    # 유럽 (구주) - 유로 적용 대상
-    "ZRH": 4.16, "LHR": 3.86, "FCO": 3.71, "FRA": 3.41, "VIE": 3.41, "CDG": 3.26, "AMS": 3.26, "MXP": 3.26, 
-    "MAD": 3.26, "BCN": 3.11, "IST": 3.01, "PRG": 2.74, "BUD": 2.74, "LIS": 2.74, "ZAG": 2.74,
-    
-    # CIS (유로 적용 대상)
-    "VVO": 2.74, "TAS": 2.74, "ALA": 2.74, "SVO": 2.74, "LED": 2.74, # CIS 기타 지역 요율 적용 (가정)
-
-    # 동남아/대양주/기타
-    "SIN": 2.96, "BKK": 2.80, "DEL": 2.50, "BOM": 2.50, "MLE": 2.50, "KUL": 2.32, "SGN": 2.32, 
-    "GUM": 3.28, "HKG": 2.35, "TPE": 2.20, "MFM": 2.20, "ULN": 1.95, "DXB": 2.59
+    "DFW": 3.21, "MIA": 3.21, "LCK": 3.21, "IAD": 3.01, "SCL": 3.19, "YVR": 3.19, "YYZ": 3.00, "ZRH": 4.16, "LHR": 3.86, "FCO": 3.71,
+    "FRA": 3.41, "VIE": 3.41, "CDG": 3.26, "AMS": 3.26, "MXP": 3.26, "MAD": 3.26, "BCN": 3.11, "IST": 3.01, "SIN": 2.96, "BKK": 2.80,
+    "DEL": 2.50, "BOM": 2.50, "MLE": 2.50, "KUL": 2.32, "SGN": 2.32, "GUM": 3.28, "HKG": 2.35, "TPE": 2.20, "MFM": 2.20, "ULN": 1.95, "DXB": 2.59
 }
 
-# 유로(€)로 표기할 도시 목록 (구주 + CIS)
 EURO_CITIES = [
-    "LHR", "CDG", "FRA", "FCO", "MXP", "ZRH", "VIE", "PRG", "BUD", "MAD", "BCN", "AMS", "IST", "LIS", "ZAG", # 유럽
-    "VVO", "TAS", "ALA", "SVO", "LED" # CIS
+    "LHR", "CDG", "FRA", "FCO", "MXP", "ZRH", "VIE", "PRG", "BUD", "MAD", "BCN", "AMS", "IST", "LIS", "ZAG",
+    "VVO", "TAS", "ALA", "SVO", "LED"
 ]
 
 # --- 헬퍼 함수 ---
@@ -77,23 +65,14 @@ def get_utc_time(dt_str, airport_code):
     except: return None
 
 def get_rate_info(city):
-    """도시별 단가와 통화 단위를 반환"""
     city = clean_str(city)
-    currency = "$" # 기본값 USD
-    rate = 2.16 # 기본값
-    
-    # 단가 찾기
-    if city in PER_DIEM_RATES: 
-        rate = PER_DIEM_RATES[city]
+    currency = "$"
+    rate = 2.16
+    if city in PER_DIEM_RATES: rate = PER_DIEM_RATES[city]
     else:
-        # 지역별 기본값 처리
         if any(jp in city for jp in ["NRT", "HND", "KIX", "NGO", "FUK", "CTS"]): rate = 2.72
         elif any(cn in city for cn in ["PEK", "PVG", "CAN", "SZX"]): rate = 1.95
-    
-    # 통화 결정 (구주/CIS는 유로)
-    if city in EURO_CITIES:
-        currency = "€"
-        
+    if city in EURO_CITIES: currency = "€"
     return rate, currency
 
 def format_dur(delta):
@@ -105,21 +84,66 @@ def format_dur(delta):
 
 # --- UI ---
 st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 CSV 변환기 (Final v3.0)")
+st.title("✈️ KAL B787 로스터 CSV 변환기 (v3.2 STBY Fix)")
 
 rank = st.radio("직책 선택 (Per Diem 계산용)", ["CAP (기장)", "FO (부기장)"], horizontal=True)
 is_cap = True if "CAP" in rank else False
 
 up_file = st.file_uploader("로스터 파일 (CSV, XLSX) 업로드", type=['csv', 'xlsx'])
 
+# --- 리저브 입력 섹션 ---
 c1, c2 = st.columns([3, 1])
 with c1:
-    res_input = st.text_input("리저브 일자 입력 (예: 01, 05)", help="입력시 자동 확인됩니다.")
+    res_input = st.text_input("리저브(Reserve) 날짜 (예: 01, 05)", help="입력 시 24시간 근무로 설정됩니다.")
 with c2:
     st.write("") 
     st.write("") 
-    if res_input:
-        st.success("✅ 리저브 입력됨")
+    if res_input: st.success("✅ 입력 완료")
+    else: st.info("⬅️ 엔터")
+
+# --- 스탠바이 입력 섹션 (3줄 분리) ---
+st.markdown("---")
+st.markdown("##### 🕒 스탠바이(STBY) 입력")
+st.caption("일자 / 시작시간 / 종료시간을 각각 입력하고 엔터를 치세요.")
+
+stby_data = [] # 입력된 데이터를 모을 리스트
+
+# STBY 1
+c_s1_1, c_s1_2, c_s1_3, c_s1_4 = st.columns([1, 1.5, 1.5, 1.5])
+with c_s1_1: d1 = st.text_input("일(Day)", key="d1", placeholder="05")
+with c_s1_2: s1 = st.text_input("시작", key="s1", placeholder="09:00")
+with c_s1_3: e1 = st.text_input("종료", key="e1", placeholder="15:00")
+with c_s1_4:
+    st.write("") 
+    st.write("") 
+    if d1 and s1 and e1: st.success("✅ STBY 1 완료")
+    else: st.info("⬅️ 입력 대기")
+if d1 and s1 and e1: stby_data.append((d1, s1, e1))
+
+# STBY 2
+c_s2_1, c_s2_2, c_s2_3, c_s2_4 = st.columns([1, 1.5, 1.5, 1.5])
+with c_s2_1: d2 = st.text_input("일(Day)", key="d2", placeholder="12")
+with c_s2_2: s2 = st.text_input("시작", key="s2", placeholder="14:00")
+with c_s2_3: e2 = st.text_input("종료", key="e2", placeholder="20:00")
+with c_s2_4:
+    st.write("") 
+    st.write("") 
+    if d2 and s2 and e2: st.success("✅ STBY 2 완료")
+    else: st.info("⬅️ 입력 대기")
+if d2 and s2 and e2: stby_data.append((d2, s2, e2))
+
+# STBY 3
+c_s3_1, c_s3_2, c_s3_3, c_s3_4 = st.columns([1, 1.5, 1.5, 1.5])
+with c_s3_1: d3 = st.text_input("일(Day)", key="d3", placeholder="20")
+with c_s3_2: s3 = st.text_input("시작", key="s3", placeholder="22:00")
+with c_s3_3: e3 = st.text_input("종료", key="e3", placeholder="02:00")
+with c_s3_4:
+    st.write("") 
+    st.write("") 
+    if d3 and s3 and e3: st.success("✅ STBY 3 완료")
+    else: st.info("⬅️ 입력 대기")
+if d3 and s3 and e3: stby_data.append((d3, s3, e3))
+
 
 if up_file:
     flight_dict = {} 
@@ -144,7 +168,6 @@ if up_file:
         df.columns = df.iloc[h_idx].apply(clean_str)
         data = df.iloc[h_idx+1:].reset_index(drop=True)
         
-        # 컬럼 탐지
         sdc_col_name = None
         for col in df.columns:
             if "special" in str(col).lower() and "duty" in str(col).lower():
@@ -163,7 +186,6 @@ if up_file:
             if f_val == 'Flight/Activity' or 'page' in f_val.lower():
                 continue
 
-            # 1. 비행 정보 식별
             if f_val and not f_val.startswith('Total'):
                 try:
                     std_str = str(row['STD'])
@@ -193,7 +215,6 @@ if up_file:
                     current_key = key
                 except: pass
             
-            # 2. Crew 정보 추출
             if current_key:
                 c_id = clean_str(row.get('Crew ID'))
                 if c_id and c_id.isdigit():
@@ -214,14 +235,12 @@ if up_file:
                     if name:
                         r_val = clean_str(row.get('Acting rank'))
                         
-                        # TVL -> Ex 변환
                         duty_val = ""
                         if duty_col_name: duty_val = clean_str(row.get(duty_col_name))
                         
                         if duty_val.upper() == "TVL": p_val = "Ex"
                         else: p_val = clean_str(row.get('PIC code'))
                         
-                        # Special Duty Code
                         sdc = ""
                         if sdc_col_name: sdc = clean_str(row.get(sdc_col_name))
                         if not sdc:
@@ -239,7 +258,6 @@ if up_file:
 
         sorted_flights = sorted(flight_dict.values(), key=lambda x: x['std_utc'])
 
-        # 로테이션 묶기
         rots = []
         t_rot = []
         for f in sorted_flights:
@@ -250,11 +268,11 @@ if up_file:
                 rots.append(t_rot); t_rot = []
         if t_rot: rots.append(t_rot)
 
-        # CSV 생성
         csv_rows = []
+        base_date = sorted_flights[0]['std_kst'] if sorted_flights else datetime.now()
 
-        if res_input and sorted_flights:
-            base_date = sorted_flights[0]['std_kst']
+        # [1] 리저브 처리
+        if res_input:
             for day_str in res_input.split(','):
                 try:
                     day = int(day_str.strip())
@@ -271,6 +289,32 @@ if up_file:
                     })
                 except: pass
 
+        # [2] 스탠바이 처리 (3개의 칸에서 입력받은 데이터 처리)
+        for s_day, s_start, s_end in stby_data:
+            try:
+                day = int(s_day.strip())
+                sh, sm = map(int, s_start.strip().split(':'))
+                eh, em = map(int, s_end.strip().split(':'))
+                
+                start_dt = base_date.replace(day=day, hour=sh, minute=sm, second=0)
+                end_dt = base_date.replace(day=day, hour=eh, minute=em, second=0)
+                
+                # 종료 시간이 시작 시간보다 빠르면 다음 날로 계산 (예: 22:00 ~ 02:00)
+                if end_dt < start_dt:
+                    end_dt += timedelta(days=1)
+                
+                csv_rows.append({
+                    "Subject": "STBY",
+                    "Start Date": start_dt.strftime('%Y-%m-%d'),
+                    "Start Time": start_dt.strftime('%H:%M'),
+                    "End Date": end_dt.strftime('%Y-%m-%d'),
+                    "End Time": end_dt.strftime('%H:%M'),
+                    "Description": "Standby Duty",
+                    "Location": "ICN"
+                })
+            except: pass
+
+        # [3] 비행 스케줄 처리
         for r in rots:
             f1, fL = r[0], r[-1]
             subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}, {f1['arr']}, {fL['arr']} {fL['sta_str'][11:]}"
@@ -307,11 +351,9 @@ if up_file:
                         stay_h = stay_diff.total_seconds() / 3600
                         if stay_h < 4:
                             total_h = total_block_seconds / 3600
-                            # 퀵턴은 달러($) 유지
                             pd_val = 60 if is_cap and total_h >=5 else (50 if is_cap else (41 if total_h >=5 else 35))
                             memo.append(f"Quick Turn (Per Diem : ${pd_val:.2f})")
                         else:
-                            # [핵심] 통화 구분 (구주/CIS는 유로)
                             rate, currency = get_rate_info(f['arr'])
                             pd_val = stay_h * rate
                             memo.append(f"Stay Hours : {format_dur(stay_diff)} (Per Diem : {pd_val:.2f} {currency})")

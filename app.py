@@ -147,10 +147,10 @@ def generate_ics(events):
 
 
 # --- UI ---
-st.set_page_config(page_title="KAL Roster to CSV Ver 1.4", page_icon="✈️")
-st.title("✈️ KAL Roster to CSV Ver 1.4")
+st.set_page_config(page_title="KAL Roster to CSV Ver 1.0", page_icon="✈️")
+st.title("✈️ KAL Roster to CSV Ver 1.0")
 
-# 사용법 배너
+# 사용법 배너 (주의사항 + 개인정보 안내 추가됨)
 with st.expander("📘 사용법 읽어보기 (Click)"):
     st.markdown("""
     **1. 스케줄 파일 준비 (iFlight CWP)**
@@ -168,6 +168,12 @@ with st.expander("📘 사용법 읽어보기 (Click)"):
     **4. 캘린더에 넣기**
     * 📱 **모바일:** **[📅 iCal 다운로드]** -> 파일 실행 -> **'모두 추가'** (저장할 캘린더 계정 확인!)
     * 💻 **PC:** **[📁 CSV 다운로드]** -> 구글 캘린더 웹사이트 -> 설정 -> 가져오기
+    
+    ---
+    ⚠️ **주의사항**
+    * **수당은 정확하지 않으니 참고만 하시기 바랍니다.**
+    * **월초와 월말에 이어지는 스케줄에 대해서는 정보가 정확하지 않습니다.**
+    * **🔒 이 사이트는 개인정보를 수집하거나 저장하지 않습니다. (변환 후 즉시 삭제)**
     """)
 
 rank = st.radio(
@@ -439,8 +445,10 @@ if up_file:
             is_sim = any(k in f1['flt'].upper() for k in SIM_KEYWORDS)
             
             if is_sim:
+                # 시뮬레이터 제목
                 subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}~{fL['sta_str'][11:]}"
             else:
+                # 다구간 경로 제목
                 route_path = ",".join([f['arr'] for f in r])
                 subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]} {route_path} {fL['sta_str'][11:]}"
             
@@ -472,9 +480,7 @@ if up_file:
                 if i < len(r)-1:
                     next_f = r[i+1]
                     
-                    # [NEW] 국내선 여부 확인 (현재 비행의 출발/도착이 모두 한국 공항)
-                    # 일반적으로 퍼디움은 '체류'에 대한 것이므로, 도착지(f['arr'])가 중요하지만
-                    # 사용자 정의: "국내선 비행(국내 이륙->국내 착륙)"의 경우 정액 지급
+                    # 국내선 여부 확인
                     is_dom = (f['dep'] in KOREA_PORTS) and (f['arr'] in KOREA_PORTS)
                     
                     if next_f['std_utc'] and f['sta_utc']:
@@ -482,11 +488,9 @@ if up_file:
                         stay_h = stay_diff.total_seconds() / 3600
                         
                         if is_dom:
-                            # 국내선 정액 지급
                             dom_pay = 26000 if is_cap else 20000
                             memo.append(f"Domestic Stay : {format_dur(stay_diff)} (Allowance : {dom_pay:,} KRW)")
                         else:
-                            # 국제선 기존 로직
                             if stay_h < 4:
                                 total_h = total_block_seconds / 3600
                                 pd_val = 60 if is_cap and total_h >=5 else (50 if is_cap else (41 if total_h >=5 else 35))
@@ -496,6 +500,7 @@ if up_file:
                                 pd_val = stay_h * rate
                                 memo.append(f"Stay Hours : {format_dur(stay_diff)} (Per Diem : {pd_val:.2f} {currency})")
                 
+                # 크루 헤더 별표 제거
                 memo.append(f"\n[{f['flt']} Crew]")
                 memo.extend(f['crews'])
                 memo.append("")

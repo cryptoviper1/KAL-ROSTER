@@ -20,18 +20,35 @@ AIRPORT_TZ = {
     'SCL': 'America/Santiago', 'LHR': 'Europe/London', 'CDG': 'Europe/Paris', 'FRA': 'Europe/Berlin', 'FCO': 'Europe/Rome', 
     'MXP': 'Europe/Rome', 'AMS': 'Europe/Amsterdam', 'ZRH': 'Europe/Zurich', 'VIE': 'Europe/Vienna', 
     'PRG': 'Europe/Prague', 'BUD': 'Europe/Budapest', 'MAD': 'Europe/Madrid', 'BCN': 'Europe/Madrid',
-    'LIS': 'Europe/Lisbon'
+    'LIS': 'Europe/Lisbon', 'ZAG': 'Europe/Zagreb', 'VVO': 'Asia/Vladivostok', 'TAS': 'Asia/Tashkent', 'ALA': 'Asia/Almaty'
 }
 
 KST = pytz.timezone('Asia/Seoul')
 UTC = pytz.utc
 
+# --- 2. Per Diem 단가표 (숫자만 관리) ---
 PER_DIEM_RATES = {
+    # 미주/구주 주요 도시
     "SFO": 4.21, "LAX": 4.01, "LAS": 4.01, "ANC": 3.81, "SEA": 3.81, "ATL": 3.61, "BOS": 3.61, "JFK": 3.61, "ORD": 3.41, "HNL": 3.41,
-    "DFW": 3.21, "MIA": 3.21, "LCK": 3.21, "IAD": 3.01, "SCL": 3.19, "YVR": 3.19, "YYZ": 3.00, "ZRH": 4.16, "LHR": 3.86, "FCO": 3.71,
-    "FRA": 3.41, "VIE": 3.41, "CDG": 3.26, "AMS": 3.26, "MXP": 3.26, "MAD": 3.26, "BCN": 3.11, "IST": 3.01, "SIN": 2.96, "BKK": 2.80,
-    "DEL": 2.50, "BOM": 2.50, "MLE": 2.50, "KUL": 2.32, "SGN": 2.32, "GUM": 3.28, "HKG": 2.35, "TPE": 2.20, "MFM": 2.20, "ULN": 1.95, "DXB": 2.59
+    "DFW": 3.21, "MIA": 3.21, "LCK": 3.21, "IAD": 3.01, "SCL": 3.19, "YVR": 3.19, "YYZ": 3.00,
+    
+    # 유럽 (구주) - 유로 적용 대상
+    "ZRH": 4.16, "LHR": 3.86, "FCO": 3.71, "FRA": 3.41, "VIE": 3.41, "CDG": 3.26, "AMS": 3.26, "MXP": 3.26, 
+    "MAD": 3.26, "BCN": 3.11, "IST": 3.01, "PRG": 2.74, "BUD": 2.74, "LIS": 2.74, "ZAG": 2.74,
+    
+    # CIS (유로 적용 대상)
+    "VVO": 2.74, "TAS": 2.74, "ALA": 2.74, "SVO": 2.74, "LED": 2.74, # CIS 기타 지역 요율 적용 (가정)
+
+    # 동남아/대양주/기타
+    "SIN": 2.96, "BKK": 2.80, "DEL": 2.50, "BOM": 2.50, "MLE": 2.50, "KUL": 2.32, "SGN": 2.32, 
+    "GUM": 3.28, "HKG": 2.35, "TPE": 2.20, "MFM": 2.20, "ULN": 1.95, "DXB": 2.59
 }
+
+# 유로(€)로 표기할 도시 목록 (구주 + CIS)
+EURO_CITIES = [
+    "LHR", "CDG", "FRA", "FCO", "MXP", "ZRH", "VIE", "PRG", "BUD", "MAD", "BCN", "AMS", "IST", "LIS", "ZAG", # 유럽
+    "VVO", "TAS", "ALA", "SVO", "LED" # CIS
+]
 
 # --- 헬퍼 함수 ---
 def clean_str(val):
@@ -59,12 +76,25 @@ def get_utc_time(dt_str, airport_code):
         return local_tz.localize(local_dt).astimezone(UTC)
     except: return None
 
-def get_rate(city):
+def get_rate_info(city):
+    """도시별 단가와 통화 단위를 반환"""
     city = clean_str(city)
-    if city in PER_DIEM_RATES: return PER_DIEM_RATES[city]
-    if any(jp in city for jp in ["NRT", "HND", "KIX", "NGO", "FUK", "CTS"]): return 2.72
-    if any(cn in city for cn in ["PEK", "PVG", "CAN", "SZX"]): return 1.95
-    return 2.16
+    currency = "$" # 기본값 USD
+    rate = 2.16 # 기본값
+    
+    # 단가 찾기
+    if city in PER_DIEM_RATES: 
+        rate = PER_DIEM_RATES[city]
+    else:
+        # 지역별 기본값 처리
+        if any(jp in city for jp in ["NRT", "HND", "KIX", "NGO", "FUK", "CTS"]): rate = 2.72
+        elif any(cn in city for cn in ["PEK", "PVG", "CAN", "SZX"]): rate = 1.95
+    
+    # 통화 결정 (구주/CIS는 유로)
+    if city in EURO_CITIES:
+        currency = "€"
+        
+    return rate, currency
 
 def format_dur(delta):
     total_seconds = int(delta.total_seconds())
@@ -75,7 +105,7 @@ def format_dur(delta):
 
 # --- UI ---
 st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 CSV 변환기 (v2.5 Final)")
+st.title("✈️ KAL B787 로스터 CSV 변환기 (Final v3.0)")
 
 rank = st.radio("직책 선택 (Per Diem 계산용)", ["CAP (기장)", "FO (부기장)"], horizontal=True)
 is_cap = True if "CAP" in rank else False
@@ -101,7 +131,6 @@ if up_file:
         else:
             df = pd.read_excel(up_file, header=None)
         
-        # 헤더 행 찾기
         h_idx = -1
         for i, row in df.iterrows():
             if row.astype(str).str.contains('Flight/Activity').any():
@@ -112,18 +141,16 @@ if up_file:
             st.error("'Flight/Activity' 행을 찾을 수 없습니다.")
             st.stop()
 
-        # 헤더 적용
         df.columns = df.iloc[h_idx].apply(clean_str)
         data = df.iloc[h_idx+1:].reset_index(drop=True)
         
-        # Special Duty Code 컬럼 탐지
+        # 컬럼 탐지
         sdc_col_name = None
         for col in df.columns:
             if "special" in str(col).lower() and "duty" in str(col).lower():
                 sdc_col_name = col
                 break
         
-        # Duty 컬럼 탐지 (TVL 확인용)
         duty_col_name = None
         for col in df.columns:
             if str(col).strip().lower() == "duty":
@@ -187,22 +214,16 @@ if up_file:
                     if name:
                         r_val = clean_str(row.get('Acting rank'))
                         
-                        # [NEW] TVL -> Ex 로직 적용
+                        # TVL -> Ex 변환
                         duty_val = ""
-                        if duty_col_name:
-                            duty_val = clean_str(row.get(duty_col_name))
+                        if duty_col_name: duty_val = clean_str(row.get(duty_col_name))
                         
-                        if duty_val.upper() == "TVL":
-                            p_val = "Ex"
-                        else:
-                            p_val = clean_str(row.get('PIC code'))
+                        if duty_val.upper() == "TVL": p_val = "Ex"
+                        else: p_val = clean_str(row.get('PIC code'))
                         
                         # Special Duty Code
                         sdc = ""
-                        if sdc_col_name:
-                             sdc = clean_str(row.get(sdc_col_name))
-                        
-                        # 만약 SDC 컬럼 못찾았으면 마지막 컬럼 시도
+                        if sdc_col_name: sdc = clean_str(row.get(sdc_col_name))
                         if not sdc:
                             last_val = clean_str(row.iloc[-1])
                             if last_val and len(last_val) < 20 and not last_val.isdigit() and last_val != name:
@@ -232,7 +253,6 @@ if up_file:
         # CSV 생성
         csv_rows = []
 
-        # 리저브 (24시간)
         if res_input and sorted_flights:
             base_date = sorted_flights[0]['std_kst']
             for day_str in res_input.split(','):
@@ -287,12 +307,14 @@ if up_file:
                         stay_h = stay_diff.total_seconds() / 3600
                         if stay_h < 4:
                             total_h = total_block_seconds / 3600
+                            # 퀵턴은 달러($) 유지
                             pd_val = 60 if is_cap and total_h >=5 else (50 if is_cap else (41 if total_h >=5 else 35))
                             memo.append(f"Quick Turn (Per Diem : ${pd_val:.2f})")
                         else:
-                            rate = get_rate(f['arr'])
+                            # [핵심] 통화 구분 (구주/CIS는 유로)
+                            rate, currency = get_rate_info(f['arr'])
                             pd_val = stay_h * rate
-                            memo.append(f"Stay Hours : {format_dur(stay_diff)} (Per Diem : ${pd_val:.2f})")
+                            memo.append(f"Stay Hours : {format_dur(stay_diff)} (Per Diem : {pd_val:.2f} {currency})")
                 
                 memo.append(f"\n★ [{f['flt']} Crew] ★")
                 memo.extend(f['crews'])

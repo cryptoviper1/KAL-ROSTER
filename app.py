@@ -25,7 +25,7 @@ def clean_str(val):
 def is_valid_name(text):
     if not text: return False
     if text.replace('.', '').isdigit(): return False
-    if text.upper() in ['P1', 'P2', 'F1', 'F2', 'CAP', 'FO', 'DUTY', 'STD', 'STA']: return False
+    if text.upper() in ['P1', 'P2', 'F1', 'F2', 'CAP', 'FO', 'DUTY', 'STD', 'STA', 'NAME', 'CREW ID']: return False
     if len(text) < 2: return False
     return True
 
@@ -43,23 +43,38 @@ def format_dur(delta):
 
 # --- UI ---
 st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 CSV 변환기 (v2.0 Page Fix)")
+st.title("✈️ KAL B787 로스터 CSV 변환기 (v2.1 Fix)")
 
 rank = st.radio("직책 선택 (Per Diem 계산용)", ["CAP (기장)", "FO (부기장)"], horizontal=True)
 is_cap = True if "CAP" in rank else False
 
 up_file = st.file_uploader("로스터 파일 (CSV, XLSX) 업로드", type=['csv', 'xlsx'])
-res_input = st.text_input("리저브 일자만 입력 (예: 01, 05)", help="연월은 자동 계산됩니다.")
+
+# 리저브 입력란 및 상태 표시
+c1, c2 = st.columns([3, 1])
+with c1:
+    res_input = st.text_input("리저브 일자 입력 (예: 01, 05)", help="입력하면 자동으로 아래에 확인 메시지가 뜹니다.")
+with c2:
+    st.write("") # 여백
+    st.write("") 
+    if res_input:
+        st.success("✅ 리저브 입력됨")
+    else:
+        st.info("대기 중...")
 
 if up_file:
-    raw_flights = []
+    # 비행 정보를 (편명, STD)를 키(Key)로 하는 딕셔너리에 저장
+    # 이렇게 하면 페이지가 넘어가서 똑같은 편명이 또 나와도 같은 방에 몰아넣을 수 있음
+    flight_dict = {} 
+    current_key = None # 현재 작업 중인 비행의 키 (편명, STD)
+
     try:
         if up_file.name.endswith('.csv'):
             df = pd.read_csv(up_file, header=None)
         else:
             df = pd.read_excel(up_file, header=None)
         
-        # 첫 번째 헤더 찾기
+        # 헤더 찾기
         h_idx = -1
         for i, row in df.iterrows():
             if row.astype(str).str.contains('Flight/Activity').any():
@@ -73,101 +88,87 @@ if up_file:
         df.columns = df.iloc[h_idx].apply(clean_str)
         data = df.iloc[h_idx+1:].reset_index(drop=True)
 
-        curr = None
-        
         for _, row in data.iterrows():
             f_val = clean_str(row.get('Flight/Activity', ''))
             
-            # [핵심 수정 1] 중간에 나오는 헤더(Flight/Activity)나 페이지 번호 무시
+            # 중간 헤더 무시
             if f_val == 'Flight/Activity' or 'page' in f_val.lower():
                 continue
 
-            # 비행 정보가 있는 행 (새로운 비행 시작)
+            # 1. 비행 정보 식별 (편명이 있으면 새로운 키 생성 or 기존 키 찾기)
             if f_val and not f_val.startswith('Total'):
-                if curr: raw_flights.append(curr)
-                
                 try:
-                    std_str = str(row['STD'])
-                    # 날짜 형식이 깨지는 경우 대비
-                    if len(std_str) < 10: continue 
+                    # STD를 파싱해서 고유 키로 사용 (문자열 그대로 쓰면 오타/공백 이슈 있을 수 있으므로 객체화)
+                    std_dt = KST.localize(datetime.strptime(str(row['STD']), '%Y-%m-%d %H:%M'))
+                    sta_dt = KST.localize(datetime.strptime(str(row['STA']), '%Y-%m-%d %H:%M'))
                     
-                    std = KST.localize(datetime.strptime(std_str, '%Y-%m-%d %H:%M'))
-                    sta = KST.localize(datetime.strptime(str(row['STA']), '%Y-%m-%d %H:%M'))
+                    # Key 생성: (편명, 출발시간)
+                    key = (f_val, std_dt)
                     
-                    curr = {
-                        "flt": f_val, 
-                        "dep": clean_str(row.get('From')), 
-                        "arr": clean_str(row.get('To')), 
-                        "std": std, "sta": sta, 
-                        "ac": clean_str(row.get('A/C')), 
-                        "crews": []
-                    }
-                except: continue
+                    # 이 비행이 처음 나온 거라면 방을 새로 만듦
+                    if key not in flight_dict:
+                        flight_dict[key] = {
+                            "flt": f_val,
+                            "dep": clean_str(row.get('From')),
+                            "arr": clean_str(row.get('To')),
+                            "std": std_dt,
+                            "sta": sta_dt,
+                            "ac": clean_str(row.get('A/C')),
+                            "crews": [] # 크루 리스트 초기화
+                        }
+                    
+                    # 현재 작업 중인 방(Key)을 이걸로 설정 (다음 줄부터 나오는 크루는 여기로 들어감)
+                    current_key = key
+                    
+                except: 
+                    # 날짜 파싱 실패 시, 이전 비행의 크루 정보일 수 있으므로 pass하고 아래 크루 로직으로 감
+                    pass
             
-            # Crew 정보 추출
-            c_id = clean_str(row.get('Crew ID'))
-            
-            if c_id and c_id.isdigit():
-                name = ""
-                raw_name = clean_str(row.get('Name'))
+            # 2. Crew 정보 추출 (현재 설정된 current_key 방에 집어넣기)
+            # 비행 정보 행에도 크루가 있을 수 있고, 그 아래 행에도 있을 수 있음.
+            if current_key:
+                c_id = clean_str(row.get('Crew ID'))
                 
-                if is_valid_name(raw_name):
-                    name = raw_name
-                else:
-                    # 옆 칸 검색
-                    row_vals = [clean_str(x) for x in row.values]
-                    if c_id in row_vals:
-                        idx = row_vals.index(c_id)
-                        for i in range(1, 6):
-                            if idx + i < len(row_vals):
-                                candidate = row_vals[idx + i]
-                                if is_valid_name(candidate):
-                                    name = candidate
-                                    break
-                
-                if curr and name:
-                    r_val = clean_str(row.get('Acting rank'))
-                    p_val = clean_str(row.get('PIC code'))
-                    sdc = clean_str(row.get('Special Duty Code'))
+                if c_id and c_id.isdigit():
+                    name = ""
+                    raw_name = clean_str(row.get('Name'))
                     
-                    info_parts = [x for x in [c_id, r_val, p_val] if x]
-                    info_str = ", ".join(info_parts)
-                    sdc_str = f" [{sdc}]" if sdc else ""
+                    if is_valid_name(raw_name):
+                        name = raw_name
+                    else:
+                        row_vals = [clean_str(x) for x in row.values]
+                        if c_id in row_vals:
+                            idx = row_vals.index(c_id)
+                            for i in range(1, 6):
+                                if idx + i < len(row_vals):
+                                    candidate = row_vals[idx + i]
+                                    if is_valid_name(candidate):
+                                        name = candidate
+                                        break
                     
-                    curr['crews'].append(f"{name} ({info_str}){sdc_str}")
+                    if name:
+                        r_val = clean_str(row.get('Acting rank'))
+                        p_val = clean_str(row.get('PIC code'))
+                        sdc = clean_str(row.get('Special Duty Code'))
+                        
+                        info_parts = [x for x in [c_id, r_val, p_val] if x]
+                        info_str = ", ".join(info_parts)
+                        sdc_str = f" [{sdc}]" if sdc else ""
+                        
+                        crew_str = f"{name} ({info_str}){sdc_str}"
+                        
+                        # 중복 방지: 이미 명단에 있는 사람이면 넣지 않음 (페이지 넘길 때 헤더 반복 등으로 인해)
+                        if crew_str not in flight_dict[current_key]['crews']:
+                            flight_dict[current_key]['crews'].append(crew_str)
 
-        if curr: raw_flights.append(curr)
-
-        # [핵심 수정 2] 페이지 연결 및 중복 병합 로직
-        # 시간순 정렬
-        raw_flights.sort(key=lambda x: x['std'])
-        
-        merged_flights = []
-        if raw_flights:
-            # 첫 비행 넣기
-            merged_flights.append(raw_flights[0])
-            
-            for i in range(1, len(raw_flights)):
-                prev = merged_flights[-1]
-                curr = raw_flights[i]
-                
-                # 조건: 편명과 출발시각이 완전히 같으면 -> 같은 비행이 페이지 넘겨서 또 나온 것
-                if prev['flt'] == curr['flt'] and prev['std'] == curr['std']:
-                    # 기존 비행에 승무원 명단만 추가 (Extend)
-                    # 중복되지 않게 체크 후 추가
-                    for c in curr['crews']:
-                        if c not in prev['crews']:
-                            prev['crews'].append(c)
-                else:
-                    # 다른 비행이면 그냥 추가
-                    merged_flights.append(curr)
+        # 3. 딕셔너리를 리스트로 변환 및 시간 정렬
+        sorted_flights = sorted(flight_dict.values(), key=lambda x: x['std'])
 
         # 4. 로테이션 묶기
         rots = []
         t_rot = []
         
-        for f in merged_flights:
-            # 안전장치: 인천/김포 출발이면 무조건 새 로테이션 시작으로 간주 (앞 로테이션 끊기)
+        for f in sorted_flights:
             if f['dep'] in ['ICN', 'GMP'] and t_rot:
                  rots.append(t_rot)
                  t_rot = []
@@ -183,22 +184,32 @@ if up_file:
         # 5. CSV 생성
         csv_rows = []
 
-        if res_input and merged_flights:
-            base_date = merged_flights[0]['std']
+        # [리저브 처리] 24시간 설정 (00:00 ~ 23:59)
+        if res_input and sorted_flights:
+            base_date = sorted_flights[0]['std']
+            dates_added = 0
             for day_str in res_input.split(','):
                 try:
                     day = int(day_str.strip())
-                    rd = base_date.replace(day=day, hour=0, minute=0)
+                    # 해당 일의 00:00 시작
+                    start_dt = base_date.replace(day=day, hour=0, minute=0, second=0)
+                    # 해당 일의 23:59:59 종료 (하루 종일)
+                    end_dt = start_dt + timedelta(hours=23, minutes=59)
+                    
                     csv_rows.append({
                         "Subject": "Reserve",
-                        "Start Date": rd.strftime('%Y-%m-%d'),
+                        "Start Date": start_dt.strftime('%Y-%m-%d'),
                         "Start Time": "00:00",
-                        "End Date": rd.strftime('%Y-%m-%d'),
-                        "End Time": "00:10",
-                        "Description": "Reserve Schedule",
+                        "End Date": end_dt.strftime('%Y-%m-%d'),
+                        "End Time": "23:59",
+                        "Description": "Reserve Schedule (All Day)",
                         "Location": "ICN"
                     })
+                    dates_added += 1
                 except: pass
+            
+            if dates_added > 0:
+                st.info(f"📆 리저브 일정 {dates_added}개가 포함되었습니다.")
 
         for r in rots:
             f1, fL = r[0], r[-1]
@@ -252,7 +263,7 @@ if up_file:
             file_name="Google_Calendar_Import.csv",
             mime="text/csv"
         )
-        st.success(f"페이지 연결 완료! (총 {len(rots)}개 스케줄)")
+        st.success(f"변환 완료! (총 {len(rots)}개 스케줄)")
 
     except Exception as e:
         st.error(f"오류가 발생했습니다: {e}")

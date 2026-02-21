@@ -105,22 +105,9 @@ def parse_time_input(t_str):
         except: return None
     return None
 
-def get_smart_date(base_date, input_day):
-    try:
-        input_day = int(input_day)
-        target_date = base_date.replace(day=input_day, hour=0, minute=0, second=0)
-        if base_date.day > 20 and input_day < 10:
-            if base_date.month == 12:
-                target_date = target_date.replace(year=base_date.year + 1, month=1)
-            else:
-                target_date = target_date.replace(month=base_date.month + 1)
-        return target_date
-    except:
-        return base_date
-
 # --- UI ---
-st.set_page_config(page_title="KAL Roster to CSV Ver 1.0", page_icon="✈️")
-st.title("✈️ KAL Roster to CSV Ver 1.0")
+st.set_page_config(page_title="KAL Roster to CSV Ver 1.1", page_icon="✈️")
+st.title("✈️ KAL Roster to CSV Ver 1.1")
 
 rank = st.radio(
     "직책 선택 (Per Diem 계산용)", 
@@ -132,13 +119,10 @@ is_cap = True if "CAP" in rank else False
 
 up_file = st.file_uploader("로스터 파일 (CSV, XLSX) 업로드", type=['csv', 'xlsx'])
 
-# [UI TIP] vertical_alignment="bottom" 옵션을 사용하여 인풋창과 텍스트의 높이를 맞춤
-# Streamlit 최신 버전 기능 활용
-
 # --- 1. 리저브 입력 ---
 c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
 with c1:
-    res_input = st.text_input("리저브(Reserve) 날짜 (예: 28, 01, 02)", help="월말/월초 자동 인식")
+    res_input = st.text_input("리저브(Reserve) 날짜 (예: 28, 01, 02)", help="해당 월의 날짜를 입력하세요.")
 with c2:
     if res_input: st.success("✅ 입력됨")
     else: st.info("⬅️ 엔터")
@@ -321,14 +305,19 @@ if up_file:
         if t_rot: rots.append(t_rot)
 
         csv_rows = []
-        last_flight_date = sorted_flights[-1]['std_kst'] if sorted_flights else datetime.now(KST)
+        # [수정] 파일의 '첫 비행' 날짜를 기준으로 해당 월을 고정
+        if sorted_flights:
+            base_date_ref = sorted_flights[0]['std_kst']
+        else:
+            base_date_ref = datetime.now(KST)
         
-        # 1. 리저브
+        # 1. 리저브 (단순 일자 교체)
         res_cnt = 0
         if res_input:
             for day_str in res_input.split(','):
                 try:
-                    start_dt = get_smart_date(last_flight_date, day_str.strip())
+                    day = int(day_str.strip())
+                    start_dt = base_date_ref.replace(day=day, hour=0, minute=0, second=0)
                     end_dt = start_dt + timedelta(hours=23, minutes=59)
                     csv_rows.append({
                         "Subject": "Reserve",
@@ -342,18 +331,21 @@ if up_file:
                     res_cnt += 1
                 except: pass
 
-        # 2. 스탠바이
+        # 2. 스탠바이 (단순 일자 교체 + 오버나이트 처리)
         stby_cnt = 0
         if stby_data:
             for s_day, s_start, s_end in stby_data:
                 try:
-                    target_date = get_smart_date(last_flight_date, s_day)
+                    day = int(s_day.strip())
                     sh, sm = parse_time_input(s_start)
                     eh, em = parse_time_input(s_end)
                     if sh is not None and eh is not None:
-                        start_dt = target_date.replace(hour=sh, minute=sm, second=0)
-                        end_dt = target_date.replace(hour=eh, minute=em, second=0)
-                        if end_dt < start_dt: end_dt += timedelta(days=1)
+                        start_dt = base_date_ref.replace(day=day, hour=sh, minute=sm, second=0)
+                        end_dt = base_date_ref.replace(day=day, hour=eh, minute=em, second=0)
+                        
+                        # 종료 시간이 시작 시간보다 빠르면(22:00 -> 02:00), 다음 날로 처리
+                        if end_dt < start_dt: 
+                            end_dt += timedelta(days=1)
                         
                         csv_rows.append({
                             "Subject": "STBY",

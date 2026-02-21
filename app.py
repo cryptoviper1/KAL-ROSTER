@@ -30,17 +30,28 @@ def format_dur(delta):
 
 # --- UI ---
 st.set_page_config(page_title="KAL Roster Converter", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 변환기 (v1.2)")
+st.title("✈️ KAL B787 로스터 변환기 (v1.3)")
 
-up_file = st.file_uploader("로스터 CSV 파일을 업로드하세요", type=['csv'])
-res_input = st.text_input("리저브 날짜 (예: 2026-03-01, 2026-03-02)")
+# 1. 직책 선택 추가
+rank = st.radio("나의 직책을 선택하세요 (Per Diem 계산용)", ["CAP (기장)", "FO (부기장)"], horizontal=True)
+is_cap = True if "CAP" in rank else False
+
+# 2. 파일 업로드 (xlsx 추가)
+up_file = st.file_uploader("로스터 파일 (CSV 또는 XLSX)을 업로드하세요", type=['csv', 'xlsx'])
+
+# 3. 리저브 일자만 입력
+res_input = st.text_input("리저브 일자만 입력 (예: 01, 05, 12)", help="연월은 로스터 파일에서 자동으로 계산합니다.")
 
 if up_file:
     flights = []
     try:
-        df = pd.read_csv(up_file, header=None)
+        # 파일 타입에 따른 읽기 방식
+        if up_file.name.endswith('.csv'):
+            df = pd.read_csv(up_file, header=None)
+        else:
+            df = pd.read_excel(up_file, header=None)
         
-        # 1. 헤더 찾기
+        # 헤더 행 찾기
         h_idx = -1
         for i, row in df.iterrows():
             if row.astype(str).str.contains('Flight/Activity').any():
@@ -65,7 +76,7 @@ if up_file:
                     curr = {"flt": f_val, "dep": str(row['From']).strip(), "arr": str(row['To']).strip(), "std": std, "sta": sta, "ac": str(row['A/C']).strip(), "crews": []}
                 except: continue
             
-            # Crew 정보 수집
+            # Crew 정보
             name = str(row.get('Name', '')).strip()
             if (name == "nan" or name == "") and curr:
                 for col in df.columns[11:15]:
@@ -73,18 +84,16 @@ if up_file:
                     if val != "nan" and val != "" and len(val) > 2:
                         name = val
                         break
-            
             if curr and name != "nan" and name != "":
                 c_id = str(row.get('Crew ID', '')).strip()
-                rank = str(row.get('Acting rank', '')).strip()
-                pic = str(row.get('PIC code', '')).strip()
+                r_val = str(row.get('Acting rank', '')).strip()
+                p_val = str(row.get('PIC code', '')).strip()
                 sdc = str(row.get('Special Duty Code', '')).strip()
                 sdc_str = f" [{sdc}]" if sdc != "nan" and sdc != "" else ""
-                curr['crews'].append(f"{name} ({c_id}, {rank}, {pic}){sdc_str}")
-
+                curr['crews'].append(f"{name} ({c_id}, {r_val}, {p_val}){sdc_str}")
         if curr: flights.append(curr)
 
-        # 2. 로테이션 묶기
+        # 로테이션 묶기
         rots = []
         t_rot = []
         for f in flights:
@@ -94,16 +103,18 @@ if up_file:
                 t_rot = []
         if t_rot: rots.append(t_rot)
 
-        # 3. ICS 생성
+        # ICS 생성
         cal = Calendar()
         cal.add('prodid', '-//KAL B787//')
         cal.add('version', '2.0')
 
-        # 리저브
-        if res_input:
-            for d in res_input.split(','):
+        # 리저브 처리 (일자만 입력받아 연월 자동 적용)
+        if res_input and flights:
+            base_date = flights[0]['std'] # 첫 비행 기준 연/월
+            for day_str in res_input.split(','):
                 try:
-                    rd = KST.localize(datetime.strptime(d.strip(), '%Y-%m-%d'))
+                    day = int(day_str.strip())
+                    rd = base_date.replace(day=day, hour=0, minute=0)
                     e = Event()
                     e.add('summary', 'Reserve')
                     e.add('dtstart', rd)
@@ -111,29 +122,37 @@ if up_file:
                     cal.add_component(e)
                 except: pass
 
-        # 비행 일정
+        # 비행 일정 및 Per Diem 계산
         for r in rots:
             f1, fL = r[0], r[-1]
-            ev = Event()
-            ev.add('summary', f"{f1['flt']}, {f1['dep']} {f1['std'].strftime('%H:%M')}, {f1['arr']}, {fL['arr']} {fL['sta'].strftime('%H:%M')}")
-            ev.add('dtstart', f1['std'])
-            ev.add('dtend', fL['sta'])
+            summary = f"{f1['flt']}, {f1['dep']} {f1['std'].strftime('%H:%M')}, {f1['arr']}, {fL['arr']} {fL['sta'].strftime('%H:%M')}"
+            ev = Event(); ev.add('summary', summary); ev.add('dtstart', f1['std']); ev.add('dtend', fL['sta'])
             
             memo = []
+            total_block_time = timedelta()
+            for f in r: total_block_time += (f['sta'] - f['std'])
+
             for i, f in enumerate(r):
                 memo.append(f"★ {f['dep']}-{f['arr']} ★")
                 if i == 0:
                     off = timedelta(hours=1, minutes=35) if f['dep']=='ICN' else timedelta(hours=1, minutes=40)
-                    showup_time = (f['std'] - off).strftime('%Y-%m-%d %H:%M')
-                    memo.append(f"{f['dep']} Show Up : {showup_time} (KST)")
+                    memo.append(f"{f['dep']} Show Up : {(f['std'] - off).strftime('%Y-%m-%d %H:%M')} (KST)")
                 
                 memo.append(f"{f['flt']}: {f['std'].strftime('%Y-%m-%d %H:%M')} (UTC {f['std'].astimezone(UTC).strftime('%H:%M')}) -> {f['sta'].strftime('%H:%M')} (UTC {f['sta'].astimezone(UTC).strftime('%H:%M')}) (A/C: {f['ac']})")
                 memo.append(f"Block Time : {format_dur(f['sta']-f['std'])}")
                 
                 if i < len(r)-1:
                     stay = r[i+1]['std'] - f['sta']
-                    pd = (stay.total_seconds()/3600) * get_rate(f['arr'])
-                    memo.append(f"Stay Hours : {format_dur(stay)} (Per Diem : ${pd:.2f})")
+                    # 퀵턴 수당 로직
+                    if stay < timedelta(hours=4): # 4시간 미만 체류 시 퀵턴
+                        total_h = total_block_time.total_seconds()/3600
+                        if is_cap: pd = 60 if total_h >= 5 else 50
+                        else: pd = 41 if total_h >= 5 else 35
+                        memo.append(f"Quick Turn (Per Diem : ${pd:.2f})")
+                    else:
+                        rate = get_rate(f['arr'])
+                        pd = (stay.total_seconds()/3600) * rate
+                        memo.append(f"Stay Hours : {format_dur(stay)} (Per Diem : ${pd:.2f})")
                 
                 memo.append(f"\n★ [{f['flt']} Crew] ★")
                 memo.extend(f['crews'])
@@ -143,7 +162,7 @@ if up_file:
             cal.add_component(ev)
 
         st.download_button("📅 캘린더 파일 다운로드", cal.to_ical(), "My_Schedule.ics", "text/calendar")
-        st.success("분석이 완료되었습니다!")
+        st.success("업그레이드된 분석이 완료되었습니다!")
 
     except Exception as e:
         st.error(f"오류가 발생했습니다: {e}")

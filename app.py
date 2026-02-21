@@ -144,8 +144,8 @@ def generate_ics(events):
 
 
 # --- UI ---
-st.set_page_config(page_title="KAL Roster to CSV Ver 1.2", page_icon="✈️")
-st.title("✈️ KAL Roster to CSV Ver 1.2")
+st.set_page_config(page_title="KAL Roster to CSV Ver 1.3", page_icon="✈️")
+st.title("✈️ KAL Roster to CSV Ver 1.3")
 
 # 사용법 배너
 with st.expander("📘 사용법 읽어보기 (Click)"):
@@ -436,11 +436,8 @@ if up_file:
             is_sim = any(k in f1['flt'].upper() for k in SIM_KEYWORDS)
             
             if is_sim:
-                # 시뮬레이터 제목
                 subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}~{fL['sta_str'][11:]}"
             else:
-                # [수정] 일반 비행 제목: 중간 경유지 모두 포함 (Multi-leg 지원)
-                # 로테이션의 모든 도착지(arr)를 콤마로 연결
                 route_path = ",".join([f['arr'] for f in r])
                 subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]} {route_path} {fL['sta_str'][11:]}"
             
@@ -483,7 +480,8 @@ if up_file:
                             pd_val = stay_h * rate
                             memo.append(f"Stay Hours : {format_dur(stay_diff)} (Per Diem : {pd_val:.2f} {currency})")
                 
-                memo.append(f"\n★ [{f['flt']} Crew] ★")
+                # [수정] 크루 헤더에서 별표 제거
+                memo.append(f"\n[{f['flt']} Crew]")
                 memo.extend(f['crews'])
                 memo.append("")
 

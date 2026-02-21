@@ -120,7 +120,7 @@ def get_smart_date(base_date, input_day):
 
 # --- UI ---
 st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 CSV 변환기 (v4.1 INT)")
+st.title("✈️ KAL B787 로스터 CSV 변환기 (v4.2 Final)")
 
 rank = st.radio(
     "직책 선택 (Per Diem 계산용)", 
@@ -216,7 +216,7 @@ if up_file:
                 duty_col_name = col
                 break
         
-        # [NEW] INT (Instructor) 컬럼 탐지
+        # INT (Instructor) 컬럼 탐지
         int_col_name = None
         for col in df.columns:
             if str(col).strip().upper() == "INT":
@@ -260,22 +260,22 @@ if up_file:
             
             # Crew 및 Instructor 추출
             if current_key:
-                # 1. 일반 크루 (Crew ID 존재 또는 Name 유효)
                 c_id = clean_str(row.get('Crew ID'))
                 r_val = clean_str(row.get('Acting rank'))
                 
-                # [NEW] Instructor 감지 로직 (Rank가 INT이거나 INT 컬럼에 값이 있을 때)
+                # 인스트럭터 로우 체크 (Acting rank가 INT)
                 is_instructor_row = (r_val == 'INT')
                 
-                # 인스트럭터 별도 컬럼 체크
+                # [수정] 인스트럭터 별도 컬럼 체크 (태그 없이 이름만 추가)
                 if int_col_name:
                     int_val = clean_str(row.get(int_col_name))
                     if is_valid_name(int_val):
-                         crew_str = f"[Instructor] {int_val}"
+                         # 태그 제거, 괄호 안에 (INT)만 표시
+                         crew_str = f"{int_val} (INT)"
                          if crew_str not in flight_dict[current_key]['crews']:
                             flight_dict[current_key]['crews'].append(crew_str)
 
-                # 일반 로우 처리 (ID가 있거나 Rank가 INT인 경우)
+                # 일반 로우 처리
                 if (c_id and c_id.isdigit()) or is_instructor_row:
                     name = ""
                     raw_name = clean_str(row.get('Name'))
@@ -309,10 +309,8 @@ if up_file:
                         info_str = ", ".join(info_parts)
                         sdc_str = f" [{sdc}]" if sdc else ""
                         
-                        # 인스트럭터면 앞에 태그 붙이기
-                        prefix = "[Instructor] " if is_instructor_row else ""
-                        
-                        crew_str = f"{prefix}{name} ({info_str}){sdc_str}"
+                        # [수정] 태그(Prefix) 제거 - 그냥 이름만 깔끔하게
+                        crew_str = f"{name} ({info_str}){sdc_str}"
                         if crew_str not in flight_dict[current_key]['crews']:
                             flight_dict[current_key]['crews'].append(crew_str)
 
@@ -381,7 +379,6 @@ if up_file:
             is_sim = any(k in f1['flt'].upper() for k in SIM_KEYWORDS)
             
             if is_sim:
-                # 시뮬레이터 제목 변경
                 subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}~{fL['sta_str'][11:]}"
             else:
                 subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}, {f1['arr']}, {fL['arr']} {fL['sta_str'][11:]}"
@@ -397,7 +394,7 @@ if up_file:
 
             for i, f in enumerate(r):
                 memo.append(f"★ {f['dep']}-{f['arr']} ★")
-                if i == 0 and not is_sim: # 시뮬레이터는 쇼업 제외
+                if i == 0 and not is_sim:
                     memo.append(f"{f['dep']} Show Up : {show_up_dt.strftime('%Y-%m-%d %H:%M')} (KST)")
                 
                 blk_dur = "N/A"

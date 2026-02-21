@@ -109,12 +109,10 @@ def get_smart_date(base_date, input_day):
     try:
         input_day = int(input_day)
         target_date = base_date.replace(day=input_day, hour=0, minute=0, second=0)
-        # 같은 달로 고정 (사용자 요청 반영)
         return target_date
     except:
         return base_date
 
-# [NEW] ICS 파일 생성 함수 (모바일용)
 def generate_ics(events):
     ics_lines = [
         "BEGIN:VCALENDAR",
@@ -127,11 +125,8 @@ def generate_ics(events):
     dt_now = datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')
     
     for evt in events:
-        # UTC 시간으로 변환
         start_dt = evt['start_dt'].astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')
         end_dt = evt['end_dt'].astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')
-        
-        # 줄바꿈 처리 (\n을 \\n으로 변경하여 ICS 포맷 맞춤)
         desc = evt['description'].replace('\n', '\\n')
         
         ics_lines.append("BEGIN:VEVENT")
@@ -149,8 +144,8 @@ def generate_ics(events):
 
 
 # --- UI ---
-st.set_page_config(page_title="KAL Roster to CSV Ver 5.0", page_icon="✈️")
-st.title("✈️ KAL Roster to CSV Ver 5.0")
+st.set_page_config(page_title="KAL Roster to CSV Ver 1.0", page_icon="✈️")
+st.title("✈️ KAL Roster to CSV Ver 1.0")
 
 rank = st.radio(
     "직책 선택 (Per Diem 계산용)", 
@@ -345,10 +340,9 @@ if up_file:
                 rots.append(t_rot); t_rot = []
         if t_rot: rots.append(t_rot)
 
-        # 이벤트를 모을 리스트 (ICS 생성을 위해)
         all_events = []
-
         csv_rows = []
+        
         if sorted_flights:
             base_date_ref = sorted_flights[0]['std_kst']
         else:
@@ -363,7 +357,6 @@ if up_file:
                     start_dt = base_date_ref.replace(day=day, hour=0, minute=0, second=0)
                     end_dt = start_dt + timedelta(hours=23, minutes=59)
                     
-                    # CSV용
                     csv_rows.append({
                         "Subject": "Reserve",
                         "Start Date": start_dt.strftime('%Y-%m-%d'),
@@ -373,7 +366,6 @@ if up_file:
                         "Description": "Reserve Schedule (All Day)",
                         "Location": "ICN"
                     })
-                    # ICS용
                     all_events.append({
                         "subject": "Reserve",
                         "start_dt": start_dt,
@@ -399,7 +391,6 @@ if up_file:
                         if end_dt < start_dt: 
                             end_dt += timedelta(days=1)
                         
-                        # CSV용
                         csv_rows.append({
                             "Subject": "STBY",
                             "Start Date": start_dt.strftime('%Y-%m-%d'),
@@ -409,7 +400,6 @@ if up_file:
                             "Description": "Standby Duty",
                             "Location": "ICN"
                         })
-                        # ICS용
                         all_events.append({
                             "subject": "STBY",
                             "start_dt": start_dt,
@@ -473,7 +463,6 @@ if up_file:
                 memo.extend(f['crews'])
                 memo.append("")
 
-            # CSV용 데이터
             csv_rows.append({
                 "Subject": subject,
                 "Start Date": f1['std_str'][:10],
@@ -484,25 +473,12 @@ if up_file:
                 "Location": f"{f1['dep']} -> {fL['arr']}"
             })
             
-            # ICS용 데이터 (UTC 기준 시간 객체가 필요함)
-            # CSV는 엑셀상의 로컬 시간을 쓰지만, ICS는 정확한 시간(UTC)을 써야 캘린더가 알아서 로컬로 보여줌
-            # 여기서는 편의상 f1['std_kst'] (KST)를 기준으로 사용하되, ICS 생성 함수에서 UTC로 변환함.
-            # 날짜는 f1['std_kst'] 기준, 시간은 CSV에 적힌 시간과 동일하게 맞춤
-            
-            # (중요) ICS 생성 시에는 엑셀의 시간(Local)을 KST로 가정하고 넣으면 해외에서 시간 틀어질 수 있음
-            # 따라서 가장 정확한 f1['std_kst'] (Show-up 기준 아님, 비행 시작 시간) 부터
-            # fL['sta_kst'] (도착 시간)까지로 잡아야 함.
-            # 하지만 위 코드에서 sta_kst는 구하지 않았으므로, std_kst + (sta_utc - std_utc) 로 계산 가능
-            
-            # 간편한 방법: CSV와 동일하게 KST 기준 시간을 사용 (한국 승무원 기준)
             start_dt_obj = f1['std_kst']
-            
-            # 종료 시간 계산: 시작 시간 + (마지막 도착 UTC - 첫 출발 UTC)
             if fL['sta_utc'] and f1['std_utc']:
                 duration = fL['sta_utc'] - f1['std_utc']
                 end_dt_obj = start_dt_obj + duration
             else:
-                end_dt_obj = start_dt_obj + timedelta(hours=10) # 예외 처리
+                end_dt_obj = start_dt_obj + timedelta(hours=10)
 
             all_events.append({
                 "subject": subject,
@@ -512,13 +488,12 @@ if up_file:
                 "location": f"{f1['dep']} -> {fL['arr']}"
             })
 
-        # --- 버튼 UI ---
         st.success("✅ 변환 완료!")
         st.caption(f"상세: 비행 {len(rots)}개, 리저브 {res_cnt}개, 스탠바이 {stby_cnt}개 포함됨")
         
         col_down1, col_down2 = st.columns(2)
         
-        # 1. CSV 다운로드
+        # 1. CSV
         res_df = pd.DataFrame(csv_rows)
         csv_buffer = res_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         
@@ -530,7 +505,7 @@ if up_file:
                 mime="text/csv"
             )
 
-        # 2. ICS 다운로드
+        # 2. ICS
         ics_text = generate_ics(all_events)
         with col_down2:
             st.download_button(

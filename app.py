@@ -82,11 +82,42 @@ def format_dur(delta):
     m = (total_seconds % 3600) // 60
     return f"{h}h {m:02d}m"
 
+# [NEW] 스마트 시간 파싱 함수 (0900 -> 9, 0 / 09:00 -> 9, 0)
+def parse_time_input(t_str):
+    t_str = str(t_str).strip()
+    # 1. 콜론이 있는 경우 (09:00)
+    if ':' in t_str:
+        try:
+            h, m = map(int, t_str.split(':'))
+            return h, m
+        except: return None
+    # 2. 4자리 숫자인 경우 (0900)
+    elif len(t_str) == 4 and t_str.isdigit():
+        try:
+            h = int(t_str[:2])
+            m = int(t_str[2:])
+            return h, m
+        except: return None
+    # 3. 3자리 숫자인 경우 (900 -> 09:00)
+    elif len(t_str) == 3 and t_str.isdigit():
+        try:
+            h = int(t_str[:1])
+            m = int(t_str[1:])
+            return h, m
+        except: return None
+    
+    return None
+
 # --- UI ---
 st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 CSV 변환기 (v3.3)")
+st.title("✈️ KAL B787 로스터 CSV 변환기 (v3.5)")
 
-rank = st.radio("직책 선택 (Per Diem 계산용)", ["CAP (기장)", "FO (부기장)"], horizontal=True)
+rank = st.radio(
+    "직책 선택 (Per Diem 계산용)", 
+    ["FO (부기장)", "CAP (기장)"], 
+    index=0, 
+    horizontal=True
+)
 is_cap = True if "CAP" in rank else False
 
 up_file = st.file_uploader("로스터 파일 (CSV, XLSX) 업로드", type=['csv', 'xlsx'])
@@ -101,18 +132,17 @@ with c2:
     if res_input: st.success("✅ 입력됨")
     else: st.info("⬅️ 엔터")
 
-# --- 2. 스탠바이 입력 (심플한 디자인) ---
+# --- 2. 스탠바이 입력 (스마트 입력 지원) ---
 st.markdown("---")
-# 제목을 크게 쓰지 않고 일반 텍스트로 깔끔하게 처리
-st.write("**스탠바이(STBY) 입력** (일자 / 시작 / 종료)")
+st.write("**스탠바이(STBY) 입력** (예: 0900 또는 09:00)")
 
-stby_data = [] # 입력 데이터 저장소
+stby_data = [] 
 
 # STBY Row 1
 c_s1_1, c_s1_2, c_s1_3, c_s1_4 = st.columns([1, 1.5, 1.5, 1.5])
 with c_s1_1: d1 = st.text_input("일(Day)", key="d1", placeholder="05")
-with c_s1_2: s1 = st.text_input("시작", key="s1", placeholder="09:00")
-with c_s1_3: e1 = st.text_input("종료", key="e1", placeholder="15:00")
+with c_s1_2: s1 = st.text_input("시작", key="s1", placeholder="0900")
+with c_s1_3: e1 = st.text_input("종료", key="e1", placeholder="1500")
 with c_s1_4:
     st.write("")
     st.write("")
@@ -120,21 +150,21 @@ with c_s1_4:
     else: st.info("⬅️ 엔터")
 if d1 and s1 and e1: stby_data.append((d1, s1, e1))
 
-# STBY Row 2 (라벨 없이 깔끔하게)
+# STBY Row 2
 c_s2_1, c_s2_2, c_s2_3, c_s2_4 = st.columns([1, 1.5, 1.5, 1.5])
 with c_s2_1: d2 = st.text_input("일(Day)2", key="d2", placeholder="12", label_visibility="collapsed")
-with c_s2_2: s2 = st.text_input("시작2", key="s2", placeholder="14:00", label_visibility="collapsed")
-with c_s2_3: e2 = st.text_input("종료2", key="e2", placeholder="20:00", label_visibility="collapsed")
+with c_s2_2: s2 = st.text_input("시작2", key="s2", placeholder="1400", label_visibility="collapsed")
+with c_s2_3: e2 = st.text_input("종료2", key="e2", placeholder="2000", label_visibility="collapsed")
 with c_s2_4:
     if d2 and s2 and e2: st.success("✅ 완료")
-    elif d2 or s2 or e2: st.info("⬅️ 엔터") # 입력 중일 때만 표시
+    elif d2 or s2 or e2: st.info("⬅️ 엔터")
 if d2 and s2 and e2: stby_data.append((d2, s2, e2))
 
 # STBY Row 3
 c_s3_1, c_s3_2, c_s3_3, c_s3_4 = st.columns([1, 1.5, 1.5, 1.5])
 with c_s3_1: d3 = st.text_input("일(Day)3", key="d3", placeholder="20", label_visibility="collapsed")
-with c_s3_2: s3 = st.text_input("시작3", key="s3", placeholder="22:00", label_visibility="collapsed")
-with c_s3_3: e3 = st.text_input("종료3", key="e3", placeholder="02:00", label_visibility="collapsed")
+with c_s3_2: s3 = st.text_input("시작3", key="s3", placeholder="2200", label_visibility="collapsed")
+with c_s3_3: e3 = st.text_input("종료3", key="e3", placeholder="0200", label_visibility="collapsed")
 with c_s3_4:
     if d3 and s3 and e3: st.success("✅ 완료")
     elif d3 or s3 or e3: st.info("⬅️ 엔터")
@@ -264,10 +294,10 @@ if up_file:
         if t_rot: rots.append(t_rot)
 
         csv_rows = []
-        # 기준 날짜 설정 (파일에서 가져옴)
         base_date = sorted_flights[0]['std_kst'] if sorted_flights else datetime.now(KST)
 
         # [1] 리저브 처리
+        res_cnt = 0
         if res_input:
             for day_str in res_input.split(','):
                 try:
@@ -283,35 +313,37 @@ if up_file:
                         "Description": "Reserve Schedule (All Day)",
                         "Location": "ICN"
                     })
+                    res_cnt += 1
                 except: pass
 
-        # [2] 스탠바이 처리 (저장 로직 수정)
+        # [2] 스탠바이 처리 (스마트 파싱 적용)
+        stby_cnt = 0
         if stby_data:
             for s_day, s_start, s_end in stby_data:
                 try:
                     day = int(s_day.strip())
-                    sh, sm = map(int, s_start.strip().split(':'))
-                    eh, em = map(int, s_end.strip().split(':'))
+                    # 스마트 파싱 함수 호출
+                    sh, sm = parse_time_input(s_start)
+                    eh, em = parse_time_input(s_end)
                     
-                    # 기준 날짜의 연/월에 입력받은 '일'과 '시간' 적용
-                    start_dt = base_date.replace(day=day, hour=sh, minute=sm, second=0)
-                    end_dt = base_date.replace(day=day, hour=eh, minute=em, second=0)
-                    
-                    if end_dt < start_dt:
-                        end_dt += timedelta(days=1)
-                    
-                    csv_rows.append({
-                        "Subject": "STBY",
-                        "Start Date": start_dt.strftime('%Y-%m-%d'),
-                        "Start Time": start_dt.strftime('%H:%M'),
-                        "End Date": end_dt.strftime('%Y-%m-%d'),
-                        "End Time": end_dt.strftime('%H:%M'),
-                        "Description": "Standby Duty",
-                        "Location": "ICN"
-                    })
-                except Exception as e:
-                    # 입력 형식이 잘못되면 조용히 넘어감
-                    pass
+                    if sh is not None and eh is not None:
+                        start_dt = base_date.replace(day=day, hour=sh, minute=sm, second=0)
+                        end_dt = base_date.replace(day=day, hour=eh, minute=em, second=0)
+                        
+                        if end_dt < start_dt:
+                            end_dt += timedelta(days=1)
+                        
+                        csv_rows.append({
+                            "Subject": "STBY",
+                            "Start Date": start_dt.strftime('%Y-%m-%d'),
+                            "Start Time": start_dt.strftime('%H:%M'),
+                            "End Date": end_dt.strftime('%Y-%m-%d'),
+                            "End Time": end_dt.strftime('%H:%M'),
+                            "Description": "Standby Duty",
+                            "Location": "ICN"
+                        })
+                        stby_cnt += 1
+                except: pass
 
         # [3] 비행 스케줄 처리
         for r in rots:
@@ -375,6 +407,7 @@ if up_file:
         csv_buffer = res_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
 
         st.info("🟦 변환 완료! 아래 버튼을 눌러 다운로드를 시작하세요.")
+        st.caption(f"상세: 비행 {len(rots)}개, 리저브 {res_cnt}개, 스탠바이 {stby_cnt}개 포함됨")
         
         if st.download_button(
             label="변환된 파일 다운로드",

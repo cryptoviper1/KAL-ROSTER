@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import pytz
-from icalendar import Calendar, Event
 import io
+import re
 
 # --- 기본 설정 ---
 KST = pytz.timezone('Asia/Seoul')
@@ -29,29 +29,25 @@ def format_dur(delta):
     return f"{h}h {m:02d}m"
 
 # --- UI ---
-st.set_page_config(page_title="KAL Roster Converter", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 변환기 (v1.3)")
+st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
+st.title("✈️ KAL B787 구글 캘린더 CSV 변환기 (Fix)")
 
-# 1. 직책 선택 추가
-rank = st.radio("나의 직책을 선택하세요 (Per Diem 계산용)", ["CAP (기장)", "FO (부기장)"], horizontal=True)
+rank = st.radio("직책 선택 (Per Diem 계산용)", ["CAP (기장)", "FO (부기장)"], horizontal=True)
 is_cap = True if "CAP" in rank else False
 
-# 2. 파일 업로드 (xlsx 추가)
-up_file = st.file_uploader("로스터 파일 (CSV 또는 XLSX)을 업로드하세요", type=['csv', 'xlsx'])
-
-# 3. 리저브 일자만 입력
-res_input = st.text_input("리저브 일자만 입력 (예: 01, 05, 12)", help="연월은 로스터 파일에서 자동으로 계산합니다.")
+up_file = st.file_uploader("로스터 파일 (CSV, XLSX) 업로드", type=['csv', 'xlsx'])
+res_input = st.text_input("리저브 일자만 입력 (예: 01, 05)", help="연월은 자동 계산됩니다.")
 
 if up_file:
     flights = []
     try:
-        # 파일 타입에 따른 읽기 방식
+        # 파일 읽기
         if up_file.name.endswith('.csv'):
             df = pd.read_csv(up_file, header=None)
         else:
             df = pd.read_excel(up_file, header=None)
         
-        # 헤더 행 찾기
+        # 'Flight/Activity' 헤더 찾기
         h_idx = -1
         for i, row in df.iterrows():
             if row.astype(str).str.contains('Flight/Activity').any():
@@ -62,13 +58,16 @@ if up_file:
             st.error("'Flight/Activity' 행을 찾을 수 없습니다.")
             st.stop()
 
+        # 헤더 적용 (공백 제거)
         df.columns = df.iloc[h_idx].str.strip()
         data = df.iloc[h_idx+1:].reset_index(drop=True)
 
         curr = None
         for _, row in data.iterrows():
+            # 1. 비행 정보 추출
             f_val = str(row.get('Flight/Activity', '')).strip()
-            if f_val != "" and f_val != "nan" and not f_val.startswith('Total'):
+            # 'Total' 행이나 nan 값 제외
+            if f_val != "" and f_val.lower() != "nan" and not f_val.startswith('Total'):
                 if curr: flights.append(curr)
                 try:
                     std = KST.localize(datetime.strptime(str(row['STD']), '%Y-%m-%d %H:%M'))
@@ -76,57 +75,92 @@ if up_file:
                     curr = {"flt": f_val, "dep": str(row['From']).strip(), "arr": str(row['To']).strip(), "std": std, "sta": sta, "ac": str(row['A/C']).strip(), "crews": []}
                 except: continue
             
-            # Crew 정보
-            name = str(row.get('Name', '')).strip()
-            if (name == "nan" or name == "") and curr:
-                for col in df.columns[11:15]:
-                    val = str(row.get(col, '')).strip()
-                    if val != "nan" and val != "" and len(val) > 2:
-                        name = val
-                        break
-            if curr and name != "nan" and name != "":
-                c_id = str(row.get('Crew ID', '')).strip()
-                r_val = str(row.get('Acting rank', '')).strip()
-                p_val = str(row.get('PIC code', '')).strip()
-                sdc = str(row.get('Special Duty Code', '')).strip()
-                sdc_str = f" [{sdc}]" if sdc != "nan" and sdc != "" else ""
-                curr['crews'].append(f"{name} ({c_id}, {r_val}, {p_val}){sdc_str}")
+            # 2. Crew 이름 추출 (강화된 로직)
+            c_id = str(row.get('Crew ID', '')).strip()
+            
+            # 사번이 있는 행만 처리 (유효한 승무원 데이터로 간주)
+            if c_id and c_id.lower() != "nan" and c_id.isdigit():
+                name = ""
+                # 해당 행의 모든 값을 리스트로 가져옴
+                row_values = [str(x).strip() for x in row.values]
+                
+                # 사번 위치 찾기
+                if c_id in row_values:
+                    id_idx = row_values.index(c_id)
+                    # 사번 뒤 5칸까지 뒤져서 "진짜 이름" 찾기
+                    for i in range(1, 6):
+                        if id_idx + i < len(row_values):
+                            candidate = row_values[id_idx + i]
+                            # 조건: nan 아니고, 공백 아니고, 숫자만 있는게 아니고(사번중복방지), 길이가 2 이상
+                            if (candidate.lower() != "nan" and 
+                                candidate != "" and 
+                                not candidate.isdigit() and 
+                                len(candidate) >= 2):
+                                name = candidate
+                                break
+                
+                # 만약 위 로직으로 못 찾았으면 'Name' 컬럼 확인
+                if name == "":
+                    raw_name = str(row.get('Name', '')).strip()
+                    if raw_name.lower() != "nan" and raw_name != "" and not raw_name.isdigit():
+                        name = raw_name
+
+                # 최종 저장 (이름이 찾아졌을 경우만)
+                if curr and name:
+                    r_val = str(row.get('Acting rank', '')).strip()
+                    p_val = str(row.get('PIC code', '')).strip()
+                    
+                    # --- Special Duty Code 완벽 제거 로직 ---
+                    sdc_raw = row.get('Special Duty Code', '')
+                    if pd.isna(sdc_raw):
+                        sdc_str = ""
+                    else:
+                        sdc = str(sdc_raw).strip()
+                        # nan 문자열, 빈 문자열, 점(.) 등을 모두 체크
+                        if sdc.lower() == 'nan' or sdc == '' or sdc == '.':
+                            sdc_str = ""
+                        else:
+                            sdc_str = f" [{sdc}]"
+                    # --------------------------------------
+
+                    curr['crews'].append(f"{name} ({c_id}, {r_val}, {p_val}){sdc_str}")
+
         if curr: flights.append(curr)
 
-        # 로테이션 묶기
+        # 로테이션 그룹화
         rots = []
         t_rot = []
         for f in flights:
             t_rot.append(f)
             if f['arr'] in ['ICN', 'GMP']:
-                rots.append(t_rot)
-                t_rot = []
+                rots.append(t_rot); t_rot = []
         if t_rot: rots.append(t_rot)
 
-        # ICS 생성
-        cal = Calendar()
-        cal.add('prodid', '-//KAL B787//')
-        cal.add('version', '2.0')
+        # CSV 생성
+        csv_rows = []
 
-        # 리저브 처리 (일자만 입력받아 연월 자동 적용)
+        # 리저브
         if res_input and flights:
-            base_date = flights[0]['std'] # 첫 비행 기준 연/월
+            base_date = flights[0]['std']
             for day_str in res_input.split(','):
                 try:
                     day = int(day_str.strip())
                     rd = base_date.replace(day=day, hour=0, minute=0)
-                    e = Event()
-                    e.add('summary', 'Reserve')
-                    e.add('dtstart', rd)
-                    e.add('dtend', rd + timedelta(minutes=10))
-                    cal.add_component(e)
+                    csv_rows.append({
+                        "Subject": "Reserve",
+                        "Start Date": rd.strftime('%Y-%m-%d'),
+                        "Start Time": "00:00",
+                        "End Date": rd.strftime('%Y-%m-%d'),
+                        "End Time": "00:10",
+                        "Description": "Reserve Schedule",
+                        "Location": "ICN"
+                    })
                 except: pass
 
-        # 비행 일정 및 Per Diem 계산
+        # 비행 스케줄
         for r in rots:
             f1, fL = r[0], r[-1]
-            summary = f"{f1['flt']}, {f1['dep']} {f1['std'].strftime('%H:%M')}, {f1['arr']}, {fL['arr']} {fL['sta'].strftime('%H:%M')}"
-            ev = Event(); ev.add('summary', summary); ev.add('dtstart', f1['std']); ev.add('dtend', fL['sta'])
+            subject = f"{f1['flt']}, {f1['dep']} {f1['std'].strftime('%H:%M')}, {f1['arr']}, {fL['arr']} {fL['sta'].strftime('%H:%M')}"
             
             memo = []
             total_block_time = timedelta()
@@ -136,33 +170,47 @@ if up_file:
                 memo.append(f"★ {f['dep']}-{f['arr']} ★")
                 if i == 0:
                     off = timedelta(hours=1, minutes=35) if f['dep']=='ICN' else timedelta(hours=1, minutes=40)
-                    memo.append(f"{f['dep']} Show Up : {(f['std'] - off).strftime('%Y-%m-%d %H:%M')} (KST)")
+                    memo.append(f"{f['dep']} Show Up : {(f['std']-off).strftime('%Y-%m-%d %H:%M')} (KST)")
                 
                 memo.append(f"{f['flt']}: {f['std'].strftime('%Y-%m-%d %H:%M')} (UTC {f['std'].astimezone(UTC).strftime('%H:%M')}) -> {f['sta'].strftime('%H:%M')} (UTC {f['sta'].astimezone(UTC).strftime('%H:%M')}) (A/C: {f['ac']})")
                 memo.append(f"Block Time : {format_dur(f['sta']-f['std'])}")
                 
                 if i < len(r)-1:
                     stay = r[i+1]['std'] - f['sta']
-                    # 퀵턴 수당 로직
-                    if stay < timedelta(hours=4): # 4시간 미만 체류 시 퀵턴
+                    if stay < timedelta(hours=4):
                         total_h = total_block_time.total_seconds()/3600
-                        if is_cap: pd = 60 if total_h >= 5 else 50
-                        else: pd = 41 if total_h >= 5 else 35
-                        memo.append(f"Quick Turn (Per Diem : ${pd:.2f})")
+                        pd_val = 60 if is_cap and total_h >=5 else (50 if is_cap else (41 if total_h >=5 else 35))
+                        memo.append(f"Quick Turn (Per Diem : ${pd_val:.2f})")
                     else:
                         rate = get_rate(f['arr'])
-                        pd = (stay.total_seconds()/3600) * rate
-                        memo.append(f"Stay Hours : {format_dur(stay)} (Per Diem : ${pd:.2f})")
+                        pd_val = (stay.total_seconds()/3600) * rate
+                        memo.append(f"Stay Hours : {format_dur(stay)} (Per Diem : ${pd_val:.2f})")
                 
                 memo.append(f"\n★ [{f['flt']} Crew] ★")
                 memo.extend(f['crews'])
                 memo.append("")
 
-            ev.add('description', "\n".join(memo))
-            cal.add_component(ev)
+            csv_rows.append({
+                "Subject": subject,
+                "Start Date": f1['std'].strftime('%Y-%m-%d'),
+                "Start Time": f1['std'].strftime('%H:%M'),
+                "End Date": fL['sta'].strftime('%Y-%m-%d'),
+                "End Time": fL['sta'].strftime('%H:%M'),
+                "Description": "\n".join(memo),
+                "Location": f"{f1['dep']} -> {fL['arr']}"
+            })
 
-        st.download_button("📅 캘린더 파일 다운로드", cal.to_ical(), "My_Schedule.ics", "text/calendar")
-        st.success("업그레이드된 분석이 완료되었습니다!")
+        # 다운로드 버튼
+        res_df = pd.DataFrame(csv_rows)
+        csv_buffer = res_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+
+        st.download_button(
+            label="📅 구글 캘린더 CSV 다운로드",
+            data=csv_buffer,
+            file_name="Google_Calendar_Import.csv",
+            mime="text/csv"
+        )
+        st.success(f"완료! (총 {len(rots)}개 스케줄)")
 
     except Exception as e:
         st.error(f"오류가 발생했습니다: {e}")

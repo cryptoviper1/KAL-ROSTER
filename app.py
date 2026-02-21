@@ -84,64 +84,60 @@ def format_dur(delta):
 
 # --- UI ---
 st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 CSV 변환기 (v3.2 STBY Fix)")
+st.title("✈️ KAL B787 로스터 CSV 변환기 (v3.3)")
 
 rank = st.radio("직책 선택 (Per Diem 계산용)", ["CAP (기장)", "FO (부기장)"], horizontal=True)
 is_cap = True if "CAP" in rank else False
 
 up_file = st.file_uploader("로스터 파일 (CSV, XLSX) 업로드", type=['csv', 'xlsx'])
 
-# --- 리저브 입력 섹션 ---
+# --- 1. 리저브 입력 ---
 c1, c2 = st.columns([3, 1])
 with c1:
     res_input = st.text_input("리저브(Reserve) 날짜 (예: 01, 05)", help="입력 시 24시간 근무로 설정됩니다.")
 with c2:
     st.write("") 
     st.write("") 
-    if res_input: st.success("✅ 입력 완료")
+    if res_input: st.success("✅ 입력됨")
     else: st.info("⬅️ 엔터")
 
-# --- 스탠바이 입력 섹션 (3줄 분리) ---
+# --- 2. 스탠바이 입력 (심플한 디자인) ---
 st.markdown("---")
-st.markdown("##### 🕒 스탠바이(STBY) 입력")
-st.caption("일자 / 시작시간 / 종료시간을 각각 입력하고 엔터를 치세요.")
+# 제목을 크게 쓰지 않고 일반 텍스트로 깔끔하게 처리
+st.write("**스탠바이(STBY) 입력** (일자 / 시작 / 종료)")
 
-stby_data = [] # 입력된 데이터를 모을 리스트
+stby_data = [] # 입력 데이터 저장소
 
-# STBY 1
+# STBY Row 1
 c_s1_1, c_s1_2, c_s1_3, c_s1_4 = st.columns([1, 1.5, 1.5, 1.5])
 with c_s1_1: d1 = st.text_input("일(Day)", key="d1", placeholder="05")
 with c_s1_2: s1 = st.text_input("시작", key="s1", placeholder="09:00")
 with c_s1_3: e1 = st.text_input("종료", key="e1", placeholder="15:00")
 with c_s1_4:
-    st.write("") 
-    st.write("") 
-    if d1 and s1 and e1: st.success("✅ STBY 1 완료")
-    else: st.info("⬅️ 입력 대기")
+    st.write("")
+    st.write("")
+    if d1 and s1 and e1: st.success("✅ 완료")
+    else: st.info("⬅️ 엔터")
 if d1 and s1 and e1: stby_data.append((d1, s1, e1))
 
-# STBY 2
+# STBY Row 2 (라벨 없이 깔끔하게)
 c_s2_1, c_s2_2, c_s2_3, c_s2_4 = st.columns([1, 1.5, 1.5, 1.5])
-with c_s2_1: d2 = st.text_input("일(Day)", key="d2", placeholder="12")
-with c_s2_2: s2 = st.text_input("시작", key="s2", placeholder="14:00")
-with c_s2_3: e2 = st.text_input("종료", key="e2", placeholder="20:00")
+with c_s2_1: d2 = st.text_input("일(Day)2", key="d2", placeholder="12", label_visibility="collapsed")
+with c_s2_2: s2 = st.text_input("시작2", key="s2", placeholder="14:00", label_visibility="collapsed")
+with c_s2_3: e2 = st.text_input("종료2", key="e2", placeholder="20:00", label_visibility="collapsed")
 with c_s2_4:
-    st.write("") 
-    st.write("") 
-    if d2 and s2 and e2: st.success("✅ STBY 2 완료")
-    else: st.info("⬅️ 입력 대기")
+    if d2 and s2 and e2: st.success("✅ 완료")
+    elif d2 or s2 or e2: st.info("⬅️ 엔터") # 입력 중일 때만 표시
 if d2 and s2 and e2: stby_data.append((d2, s2, e2))
 
-# STBY 3
+# STBY Row 3
 c_s3_1, c_s3_2, c_s3_3, c_s3_4 = st.columns([1, 1.5, 1.5, 1.5])
-with c_s3_1: d3 = st.text_input("일(Day)", key="d3", placeholder="20")
-with c_s3_2: s3 = st.text_input("시작", key="s3", placeholder="22:00")
-with c_s3_3: e3 = st.text_input("종료", key="e3", placeholder="02:00")
+with c_s3_1: d3 = st.text_input("일(Day)3", key="d3", placeholder="20", label_visibility="collapsed")
+with c_s3_2: s3 = st.text_input("시작3", key="s3", placeholder="22:00", label_visibility="collapsed")
+with c_s3_3: e3 = st.text_input("종료3", key="e3", placeholder="02:00", label_visibility="collapsed")
 with c_s3_4:
-    st.write("") 
-    st.write("") 
-    if d3 and s3 and e3: st.success("✅ STBY 3 완료")
-    else: st.info("⬅️ 입력 대기")
+    if d3 and s3 and e3: st.success("✅ 완료")
+    elif d3 or s3 or e3: st.info("⬅️ 엔터")
 if d3 and s3 and e3: stby_data.append((d3, s3, e3))
 
 
@@ -237,7 +233,6 @@ if up_file:
                         
                         duty_val = ""
                         if duty_col_name: duty_val = clean_str(row.get(duty_col_name))
-                        
                         if duty_val.upper() == "TVL": p_val = "Ex"
                         else: p_val = clean_str(row.get('PIC code'))
                         
@@ -269,7 +264,8 @@ if up_file:
         if t_rot: rots.append(t_rot)
 
         csv_rows = []
-        base_date = sorted_flights[0]['std_kst'] if sorted_flights else datetime.now()
+        # 기준 날짜 설정 (파일에서 가져옴)
+        base_date = sorted_flights[0]['std_kst'] if sorted_flights else datetime.now(KST)
 
         # [1] 리저브 처리
         if res_input:
@@ -289,30 +285,33 @@ if up_file:
                     })
                 except: pass
 
-        # [2] 스탠바이 처리 (3개의 칸에서 입력받은 데이터 처리)
-        for s_day, s_start, s_end in stby_data:
-            try:
-                day = int(s_day.strip())
-                sh, sm = map(int, s_start.strip().split(':'))
-                eh, em = map(int, s_end.strip().split(':'))
-                
-                start_dt = base_date.replace(day=day, hour=sh, minute=sm, second=0)
-                end_dt = base_date.replace(day=day, hour=eh, minute=em, second=0)
-                
-                # 종료 시간이 시작 시간보다 빠르면 다음 날로 계산 (예: 22:00 ~ 02:00)
-                if end_dt < start_dt:
-                    end_dt += timedelta(days=1)
-                
-                csv_rows.append({
-                    "Subject": "STBY",
-                    "Start Date": start_dt.strftime('%Y-%m-%d'),
-                    "Start Time": start_dt.strftime('%H:%M'),
-                    "End Date": end_dt.strftime('%Y-%m-%d'),
-                    "End Time": end_dt.strftime('%H:%M'),
-                    "Description": "Standby Duty",
-                    "Location": "ICN"
-                })
-            except: pass
+        # [2] 스탠바이 처리 (저장 로직 수정)
+        if stby_data:
+            for s_day, s_start, s_end in stby_data:
+                try:
+                    day = int(s_day.strip())
+                    sh, sm = map(int, s_start.strip().split(':'))
+                    eh, em = map(int, s_end.strip().split(':'))
+                    
+                    # 기준 날짜의 연/월에 입력받은 '일'과 '시간' 적용
+                    start_dt = base_date.replace(day=day, hour=sh, minute=sm, second=0)
+                    end_dt = base_date.replace(day=day, hour=eh, minute=em, second=0)
+                    
+                    if end_dt < start_dt:
+                        end_dt += timedelta(days=1)
+                    
+                    csv_rows.append({
+                        "Subject": "STBY",
+                        "Start Date": start_dt.strftime('%Y-%m-%d'),
+                        "Start Time": start_dt.strftime('%H:%M'),
+                        "End Date": end_dt.strftime('%Y-%m-%d'),
+                        "End Time": end_dt.strftime('%H:%M'),
+                        "Description": "Standby Duty",
+                        "Location": "ICN"
+                    })
+                except Exception as e:
+                    # 입력 형식이 잘못되면 조용히 넘어감
+                    pass
 
         # [3] 비행 스케줄 처리
         for r in rots:

@@ -119,8 +119,8 @@ def get_smart_date(base_date, input_day):
         return base_date
 
 # --- UI ---
-st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 CSV 변환기 (v4.2 Final)")
+st.set_page_config(page_title="KAL Roster to CSV Ver 1.0", page_icon="✈️")
+st.title("✈️ KAL Roster to CSV Ver 1.0")
 
 rank = st.radio(
     "직책 선택 (Per Diem 계산용)", 
@@ -132,13 +132,14 @@ is_cap = True if "CAP" in rank else False
 
 up_file = st.file_uploader("로스터 파일 (CSV, XLSX) 업로드", type=['csv', 'xlsx'])
 
+# [UI TIP] vertical_alignment="bottom" 옵션을 사용하여 인풋창과 텍스트의 높이를 맞춤
+# Streamlit 최신 버전 기능 활용
+
 # --- 1. 리저브 입력 ---
-c1, c2 = st.columns([3, 1])
+c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
 with c1:
     res_input = st.text_input("리저브(Reserve) 날짜 (예: 28, 01, 02)", help="월말/월초 자동 인식")
 with c2:
-    st.write("") 
-    st.write("") 
     if res_input: st.success("✅ 입력됨")
     else: st.info("⬅️ 엔터")
 
@@ -149,32 +150,30 @@ st.write("**스탠바이(STBY) 입력** (예: 0900 또는 09:00)")
 stby_data = [] 
 
 # STBY Row 1
-c_s1_1, c_s1_2, c_s1_3, c_s1_4 = st.columns([1, 1.5, 1.5, 1.5])
+c_s1_1, c_s1_2, c_s1_3, c_s1_4 = st.columns([1, 1.5, 1.5, 1.5], vertical_alignment="bottom")
 with c_s1_1: d1 = st.text_input("일(Day)", key="d1", placeholder="05")
 with c_s1_2: s1 = st.text_input("시작", key="s1", placeholder="0900")
 with c_s1_3: e1 = st.text_input("종료", key="e1", placeholder="1500")
 with c_s1_4:
-    st.write("")
-    st.write("")
     if d1 and s1 and e1: st.success("✅ 완료")
     else: st.info("⬅️ 엔터")
 if d1 and s1 and e1: stby_data.append((d1, s1, e1))
 
 # STBY Row 2
-c_s2_1, c_s2_2, c_s2_3, c_s2_4 = st.columns([1, 1.5, 1.5, 1.5])
-with c_s2_1: d2 = st.text_input("일(Day)2", key="d2", placeholder="12", label_visibility="collapsed")
-with c_s2_2: s2 = st.text_input("시작2", key="s2", placeholder="1400", label_visibility="collapsed")
-with c_s2_3: e2 = st.text_input("종료2", key="e2", placeholder="2000", label_visibility="collapsed")
+c_s2_1, c_s2_2, c_s2_3, c_s2_4 = st.columns([1, 1.5, 1.5, 1.5], vertical_alignment="bottom")
+with c_s2_1: d2 = st.text_input("일(Day)2", key="d2", placeholder="12", label_visibility="hidden")
+with c_s2_2: s2 = st.text_input("시작2", key="s2", placeholder="1400", label_visibility="hidden")
+with c_s2_3: e2 = st.text_input("종료2", key="e2", placeholder="2000", label_visibility="hidden")
 with c_s2_4:
     if d2 and s2 and e2: st.success("✅ 완료")
     elif d2 or s2 or e2: st.info("⬅️ 엔터")
 if d2 and s2 and e2: stby_data.append((d2, s2, e2))
 
 # STBY Row 3
-c_s3_1, c_s3_2, c_s3_3, c_s3_4 = st.columns([1, 1.5, 1.5, 1.5])
-with c_s3_1: d3 = st.text_input("일(Day)3", key="d3", placeholder="20", label_visibility="collapsed")
-with c_s3_2: s3 = st.text_input("시작3", key="s3", placeholder="2200", label_visibility="collapsed")
-with c_s3_3: e3 = st.text_input("종료3", key="e3", placeholder="0200", label_visibility="collapsed")
+c_s3_1, c_s3_2, c_s3_3, c_s3_4 = st.columns([1, 1.5, 1.5, 1.5], vertical_alignment="bottom")
+with c_s3_1: d3 = st.text_input("일(Day)3", key="d3", placeholder="20", label_visibility="hidden")
+with c_s3_2: s3 = st.text_input("시작3", key="s3", placeholder="2200", label_visibility="hidden")
+with c_s3_3: e3 = st.text_input("종료3", key="e3", placeholder="0200", label_visibility="hidden")
 with c_s3_4:
     if d3 and s3 and e3: st.success("✅ 완료")
     elif d3 or s3 or e3: st.info("⬅️ 엔터")
@@ -216,7 +215,6 @@ if up_file:
                 duty_col_name = col
                 break
         
-        # INT (Instructor) 컬럼 탐지
         int_col_name = None
         for col in df.columns:
             if str(col).strip().upper() == "INT":
@@ -262,20 +260,17 @@ if up_file:
             if current_key:
                 c_id = clean_str(row.get('Crew ID'))
                 r_val = clean_str(row.get('Acting rank'))
-                
-                # 인스트럭터 로우 체크 (Acting rank가 INT)
                 is_instructor_row = (r_val == 'INT')
                 
-                # [수정] 인스트럭터 별도 컬럼 체크 (태그 없이 이름만 추가)
+                # Instructor Check
                 if int_col_name:
                     int_val = clean_str(row.get(int_col_name))
                     if is_valid_name(int_val):
-                         # 태그 제거, 괄호 안에 (INT)만 표시
                          crew_str = f"{int_val} (INT)"
                          if crew_str not in flight_dict[current_key]['crews']:
                             flight_dict[current_key]['crews'].append(crew_str)
 
-                # 일반 로우 처리
+                # Crew Check
                 if (c_id and c_id.isdigit()) or is_instructor_row:
                     name = ""
                     raw_name = clean_str(row.get('Name'))
@@ -309,7 +304,6 @@ if up_file:
                         info_str = ", ".join(info_parts)
                         sdc_str = f" [{sdc}]" if sdc else ""
                         
-                        # [수정] 태그(Prefix) 제거 - 그냥 이름만 깔끔하게
                         crew_str = f"{name} ({info_str}){sdc_str}"
                         if crew_str not in flight_dict[current_key]['crews']:
                             flight_dict[current_key]['crews'].append(crew_str)

@@ -38,6 +38,9 @@ EURO_CITIES = [
     "VVO", "TAS", "ALA", "SVO", "LED"
 ]
 
+# 시뮬레이터 키워드 정의
+SIM_KEYWORDS = ["RECPT", "RECPC", "UPRT"]
+
 # --- 헬퍼 함수 ---
 def clean_str(val):
     if pd.isna(val): return ""
@@ -82,35 +85,30 @@ def format_dur(delta):
     m = (total_seconds % 3600) // 60
     return f"{h}h {m:02d}m"
 
-# [NEW] 스마트 시간 파싱 함수 (0900 -> 9, 0 / 09:00 -> 9, 0)
 def parse_time_input(t_str):
     t_str = str(t_str).strip()
-    # 1. 콜론이 있는 경우 (09:00)
     if ':' in t_str:
         try:
             h, m = map(int, t_str.split(':'))
             return h, m
         except: return None
-    # 2. 4자리 숫자인 경우 (0900)
     elif len(t_str) == 4 and t_str.isdigit():
         try:
             h = int(t_str[:2])
             m = int(t_str[2:])
             return h, m
         except: return None
-    # 3. 3자리 숫자인 경우 (900 -> 09:00)
     elif len(t_str) == 3 and t_str.isdigit():
         try:
             h = int(t_str[:1])
             m = int(t_str[1:])
             return h, m
         except: return None
-    
     return None
 
 # --- UI ---
 st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 CSV 변환기 (v3.5)")
+st.title("✈️ KAL B787 로스터 CSV 변환기 (v3.6 SIM)")
 
 rank = st.radio(
     "직책 선택 (Per Diem 계산용)", 
@@ -132,7 +130,7 @@ with c2:
     if res_input: st.success("✅ 입력됨")
     else: st.info("⬅️ 엔터")
 
-# --- 2. 스탠바이 입력 (스마트 입력 지원) ---
+# --- 2. 스탠바이 입력 ---
 st.markdown("---")
 st.write("**스탠바이(STBY) 입력** (예: 0900 또는 09:00)")
 
@@ -296,7 +294,7 @@ if up_file:
         csv_rows = []
         base_date = sorted_flights[0]['std_kst'] if sorted_flights else datetime.now(KST)
 
-        # [1] 리저브 처리
+        # [1] 리저브
         res_cnt = 0
         if res_input:
             for day_str in res_input.split(','):
@@ -316,22 +314,19 @@ if up_file:
                     res_cnt += 1
                 except: pass
 
-        # [2] 스탠바이 처리 (스마트 파싱 적용)
+        # [2] 스탠바이
         stby_cnt = 0
         if stby_data:
             for s_day, s_start, s_end in stby_data:
                 try:
                     day = int(s_day.strip())
-                    # 스마트 파싱 함수 호출
                     sh, sm = parse_time_input(s_start)
                     eh, em = parse_time_input(s_end)
                     
                     if sh is not None and eh is not None:
                         start_dt = base_date.replace(day=day, hour=sh, minute=sm, second=0)
                         end_dt = base_date.replace(day=day, hour=eh, minute=em, second=0)
-                        
-                        if end_dt < start_dt:
-                            end_dt += timedelta(days=1)
+                        if end_dt < start_dt: end_dt += timedelta(days=1)
                         
                         csv_rows.append({
                             "Subject": "STBY",
@@ -345,10 +340,19 @@ if up_file:
                         stby_cnt += 1
                 except: pass
 
-        # [3] 비행 스케줄 처리
+        # [3] 비행 및 시뮬레이터 스케줄
         for r in rots:
             f1, fL = r[0], r[-1]
-            subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}, {f1['arr']}, {fL['arr']} {fL['sta_str'][11:]}"
+            
+            # 시뮬레이터(SIM) 체크
+            is_sim = any(k in f1['flt'].upper() for k in SIM_KEYWORDS)
+            
+            if is_sim:
+                # 시뮬레이터용 제목 (78RECPT2, ICN 07:00~14:00)
+                subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}~{fL['sta_str'][11:]}"
+            else:
+                # 일반 비행용 제목
+                subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}, {f1['arr']}, {fL['arr']} {fL['sta_str'][11:]}"
             
             memo = []
             off = timedelta(hours=1, minutes=35) if f1['dep']=='ICN' else timedelta(hours=1, minutes=40)
@@ -361,7 +365,9 @@ if up_file:
 
             for i, f in enumerate(r):
                 memo.append(f"★ {f['dep']}-{f['arr']} ★")
-                if i == 0:
+                
+                # 시뮬레이터가 아닐 때만 Show Up 표시
+                if i == 0 and not is_sim:
                     memo.append(f"{f['dep']} Show Up : {show_up_dt.strftime('%Y-%m-%d %H:%M')} (KST)")
                 
                 blk_dur = "N/A"

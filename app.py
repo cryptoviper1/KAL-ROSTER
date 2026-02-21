@@ -23,8 +23,8 @@ AIRPORT_TZ = {
     'LIS': 'Europe/Lisbon', 'ZAG': 'Europe/Zagreb', 'VVO': 'Asia/Vladivostok', 'TAS': 'Asia/Tashkent', 'ALA': 'Asia/Almaty'
 }
 
-# [NEW] 국내 공항 목록 (국내선 판별용)
-KOREA_PORTS = ['ICN', 'GMP', 'PUS', 'CJU', 'TAE', 'KWJ', 'USN', 'YNY', 'KUV', 'RSU', 'WJU']
+# 한국 공항 목록 (국내선 판별용)
+KOREA_PORTS = ['ICN', 'GMP', 'PUS', 'CJU', 'TAE', 'KWJ', 'RSU', 'USN', 'KUV', 'WJU', 'YNY']
 
 KST = pytz.timezone('Asia/Seoul')
 UTC = pytz.utc
@@ -376,4 +376,183 @@ if up_file:
         if res_input:
             for day_str in res_input.split(','):
                 try:
-                    day =
+                    day = int(day_str.strip())
+                    start_dt = base_date_ref.replace(day=day, hour=0, minute=0, second=0)
+                    end_dt = start_dt + timedelta(hours=23, minutes=59)
+                    
+                    csv_rows.append({
+                        "Subject": "Reserve",
+                        "Start Date": start_dt.strftime('%Y-%m-%d'),
+                        "Start Time": "00:00",
+                        "End Date": end_dt.strftime('%Y-%m-%d'),
+                        "End Time": "23:59",
+                        "Description": "Reserve Schedule (All Day)",
+                        "Location": "ICN"
+                    })
+                    all_events.append({
+                        "subject": "Reserve",
+                        "start_dt": start_dt,
+                        "end_dt": end_dt,
+                        "description": "Reserve Schedule (All Day)",
+                        "location": "ICN"
+                    })
+                    res_cnt += 1
+                except: pass
+
+        # 2. 스탠바이
+        stby_cnt = 0
+        if stby_data:
+            for s_day, s_start, s_end in stby_data:
+                try:
+                    day = int(s_day.strip())
+                    sh, sm = parse_time_input(s_start)
+                    eh, em = parse_time_input(s_end)
+                    if sh is not None and eh is not None:
+                        start_dt = base_date_ref.replace(day=day, hour=sh, minute=sm, second=0)
+                        end_dt = base_date_ref.replace(day=day, hour=eh, minute=em, second=0)
+                        
+                        if end_dt < start_dt: 
+                            end_dt += timedelta(days=1)
+                        
+                        csv_rows.append({
+                            "Subject": "STBY",
+                            "Start Date": start_dt.strftime('%Y-%m-%d'),
+                            "Start Time": start_dt.strftime('%H:%M'),
+                            "End Date": end_dt.strftime('%Y-%m-%d'),
+                            "End Time": end_dt.strftime('%H:%M'),
+                            "Description": "Standby Duty",
+                            "Location": "ICN"
+                        })
+                        all_events.append({
+                            "subject": "STBY",
+                            "start_dt": start_dt,
+                            "end_dt": end_dt,
+                            "description": "Standby Duty",
+                            "location": "ICN"
+                        })
+                        stby_cnt += 1
+                except: pass
+
+        # 3. 비행 및 시뮬레이터
+        for r in rots:
+            f1, fL = r[0], r[-1]
+            is_sim = any(k in f1['flt'].upper() for k in SIM_KEYWORDS)
+            
+            if is_sim:
+                subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}~{fL['sta_str'][11:]}"
+            else:
+                route_path = ",".join([f['arr'] for f in r])
+                subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]} {route_path} {fL['sta_str'][11:]}"
+            
+            memo = []
+            off = timedelta(hours=1, minutes=35) if f1['dep']=='ICN' else timedelta(hours=1, minutes=40)
+            show_up_dt = f1['std_kst'] - off
+            
+            total_block_seconds = 0
+            for f in r:
+                if f['sta_utc'] and f['std_utc']:
+                    total_block_seconds += (f['sta_utc'] - f['std_utc']).total_seconds()
+
+            for i, f in enumerate(r):
+                memo.append(f"★ {f['dep']}-{f['arr']} ★")
+                if i == 0 and not is_sim:
+                    memo.append(f"{f['dep']} Show Up : {show_up_dt.strftime('%Y-%m-%d %H:%M')} (KST)")
+                
+                blk_dur = "N/A"
+                if f['sta_utc'] and f['std_utc']:
+                    blk_dur = format_dur(f['sta_utc'] - f['std_utc'])
+                
+                std_utc_str = f['std_utc'].strftime('%H:%M') if f['std_utc'] else "?"
+                sta_utc_str = f['sta_utc'].strftime('%H:%M') if f['sta_utc'] else "?"
+                
+                memo.append(f"{f['flt']}: {f['std_str']} (UTC {std_utc_str})")
+                memo.append(f"-> {f['sta_str']} (UTC {sta_utc_str}) (A/C: {f['ac']})")
+                memo.append(f"Block Time : {blk_dur}")
+                
+                if i < len(r)-1:
+                    next_f = r[i+1]
+                    
+                    # [NEW] 국내선 여부 확인 (현재 비행의 출발/도착이 모두 한국 공항)
+                    # 일반적으로 퍼디움은 '체류'에 대한 것이므로, 도착지(f['arr'])가 중요하지만
+                    # 사용자 정의: "국내선 비행(국내 이륙->국내 착륙)"의 경우 정액 지급
+                    is_dom = (f['dep'] in KOREA_PORTS) and (f['arr'] in KOREA_PORTS)
+                    
+                    if next_f['std_utc'] and f['sta_utc']:
+                        stay_diff = next_f['std_utc'] - f['sta_utc']
+                        stay_h = stay_diff.total_seconds() / 3600
+                        
+                        if is_dom:
+                            # 국내선 정액 지급
+                            dom_pay = 26000 if is_cap else 20000
+                            memo.append(f"Domestic Stay : {format_dur(stay_diff)} (Allowance : {dom_pay:,} KRW)")
+                        else:
+                            # 국제선 기존 로직
+                            if stay_h < 4:
+                                total_h = total_block_seconds / 3600
+                                pd_val = 60 if is_cap and total_h >=5 else (50 if is_cap else (41 if total_h >=5 else 35))
+                                memo.append(f"Quick Turn (Per Diem : ${pd_val:.2f})")
+                            else:
+                                rate, currency = get_rate_info(f['arr'])
+                                pd_val = stay_h * rate
+                                memo.append(f"Stay Hours : {format_dur(stay_diff)} (Per Diem : {pd_val:.2f} {currency})")
+                
+                memo.append(f"\n[{f['flt']} Crew]")
+                memo.extend(f['crews'])
+                memo.append("")
+
+            # CSV용 데이터
+            csv_rows.append({
+                "Subject": subject,
+                "Start Date": f1['std_str'][:10],
+                "Start Time": f1['std_str'][11:],
+                "End Date": fL['sta_str'][:10],
+                "End Time": fL['sta_str'][11:],
+                "Description": "\n".join(memo),
+                "Location": f"{f1['dep']} -> {fL['arr']}"
+            })
+            
+            # ICS용 데이터
+            start_dt_obj = f1['std_kst']
+            if fL['sta_utc'] and f1['std_utc']:
+                duration = fL['sta_utc'] - f1['std_utc']
+                end_dt_obj = start_dt_obj + duration
+            else:
+                end_dt_obj = start_dt_obj + timedelta(hours=10)
+
+            all_events.append({
+                "subject": subject,
+                "start_dt": start_dt_obj,
+                "end_dt": end_dt_obj,
+                "description": "\n".join(memo),
+                "location": f"{f1['dep']} -> {fL['arr']}"
+            })
+
+        st.success("✅ 변환 완료!")
+        st.caption(f"상세: 비행 {len(rots)}개, 리저브 {res_cnt}개, 스탠바이 {stby_cnt}개 포함됨")
+        
+        col_down1, col_down2 = st.columns(2)
+        
+        # 1. CSV
+        res_df = pd.DataFrame(csv_rows)
+        csv_buffer = res_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        
+        with col_down1:
+            st.download_button(
+                label="📁 CSV 다운로드 (PC)",
+                data=csv_buffer,
+                file_name="Google_Calendar.csv",
+                mime="text/csv"
+            )
+
+        # 2. ICS
+        ics_text = generate_ics(all_events)
+        with col_down2:
+            st.download_button(
+                label="📅 iCal 다운로드 (모바일)",
+                data=ics_text,
+                file_name="Roster.ics",
+                mime="text/calendar"
+            )
+
+    except Exception as e:
+        st.error(f"오류가 발생했습니다: {e}")

@@ -38,7 +38,6 @@ EURO_CITIES = [
     "VVO", "TAS", "ALA", "SVO", "LED"
 ]
 
-# 시뮬레이터 키워드 정의
 SIM_KEYWORDS = ["RECPT", "RECPC", "UPRT"]
 
 # --- 헬퍼 함수 ---
@@ -51,7 +50,7 @@ def clean_str(val):
 def is_valid_name(text):
     if not text: return False
     if text.replace('.', '').isdigit(): return False
-    if text.upper() in ['P1', 'P2', 'F1', 'F2', 'CAP', 'FO', 'DUTY', 'STD', 'STA', 'NAME', 'CREW ID', 'SPECIAL DUTY CODE', 'TVL', 'FLY']: return False
+    if text.upper() in ['P1', 'P2', 'F1', 'F2', 'CAP', 'FO', 'DUTY', 'STD', 'STA', 'NAME', 'CREW ID', 'SPECIAL DUTY CODE', 'TVL', 'FLY', 'INT']: return False
     if len(text) < 2: return False
     return True
 
@@ -106,9 +105,22 @@ def parse_time_input(t_str):
         except: return None
     return None
 
+def get_smart_date(base_date, input_day):
+    try:
+        input_day = int(input_day)
+        target_date = base_date.replace(day=input_day, hour=0, minute=0, second=0)
+        if base_date.day > 20 and input_day < 10:
+            if base_date.month == 12:
+                target_date = target_date.replace(year=base_date.year + 1, month=1)
+            else:
+                target_date = target_date.replace(month=base_date.month + 1)
+        return target_date
+    except:
+        return base_date
+
 # --- UI ---
 st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 CSV 변환기 (v3.6 SIM)")
+st.title("✈️ KAL B787 로스터 CSV 변환기 (v4.1 INT)")
 
 rank = st.radio(
     "직책 선택 (Per Diem 계산용)", 
@@ -123,7 +135,7 @@ up_file = st.file_uploader("로스터 파일 (CSV, XLSX) 업로드", type=['csv'
 # --- 1. 리저브 입력 ---
 c1, c2 = st.columns([3, 1])
 with c1:
-    res_input = st.text_input("리저브(Reserve) 날짜 (예: 01, 05)", help="입력 시 24시간 근무로 설정됩니다.")
+    res_input = st.text_input("리저브(Reserve) 날짜 (예: 28, 01, 02)", help="월말/월초 자동 인식")
 with c2:
     st.write("") 
     st.write("") 
@@ -203,6 +215,13 @@ if up_file:
             if str(col).strip().lower() == "duty":
                 duty_col_name = col
                 break
+        
+        # [NEW] INT (Instructor) 컬럼 탐지
+        int_col_name = None
+        for col in df.columns:
+            if str(col).strip().upper() == "INT":
+                int_col_name = col
+                break
 
         for _, row in data.iterrows():
             f_val = clean_str(row.get('Flight/Activity', ''))
@@ -239,9 +258,25 @@ if up_file:
                     current_key = key
                 except: pass
             
+            # Crew 및 Instructor 추출
             if current_key:
+                # 1. 일반 크루 (Crew ID 존재 또는 Name 유효)
                 c_id = clean_str(row.get('Crew ID'))
-                if c_id and c_id.isdigit():
+                r_val = clean_str(row.get('Acting rank'))
+                
+                # [NEW] Instructor 감지 로직 (Rank가 INT이거나 INT 컬럼에 값이 있을 때)
+                is_instructor_row = (r_val == 'INT')
+                
+                # 인스트럭터 별도 컬럼 체크
+                if int_col_name:
+                    int_val = clean_str(row.get(int_col_name))
+                    if is_valid_name(int_val):
+                         crew_str = f"[Instructor] {int_val}"
+                         if crew_str not in flight_dict[current_key]['crews']:
+                            flight_dict[current_key]['crews'].append(crew_str)
+
+                # 일반 로우 처리 (ID가 있거나 Rank가 INT인 경우)
+                if (c_id and c_id.isdigit()) or is_instructor_row:
                     name = ""
                     raw_name = clean_str(row.get('Name'))
                     if is_valid_name(raw_name):
@@ -257,10 +292,9 @@ if up_file:
                                         name = candidate
                                         break
                     if name:
-                        r_val = clean_str(row.get('Acting rank'))
-                        
                         duty_val = ""
                         if duty_col_name: duty_val = clean_str(row.get(duty_col_name))
+                        
                         if duty_val.upper() == "TVL": p_val = "Ex"
                         else: p_val = clean_str(row.get('PIC code'))
                         
@@ -275,7 +309,10 @@ if up_file:
                         info_str = ", ".join(info_parts)
                         sdc_str = f" [{sdc}]" if sdc else ""
                         
-                        crew_str = f"{name} ({info_str}){sdc_str}"
+                        # 인스트럭터면 앞에 태그 붙이기
+                        prefix = "[Instructor] " if is_instructor_row else ""
+                        
+                        crew_str = f"{prefix}{name} ({info_str}){sdc_str}"
                         if crew_str not in flight_dict[current_key]['crews']:
                             flight_dict[current_key]['crews'].append(crew_str)
 
@@ -292,15 +329,14 @@ if up_file:
         if t_rot: rots.append(t_rot)
 
         csv_rows = []
-        base_date = sorted_flights[0]['std_kst'] if sorted_flights else datetime.now(KST)
-
-        # [1] 리저브
+        last_flight_date = sorted_flights[-1]['std_kst'] if sorted_flights else datetime.now(KST)
+        
+        # 1. 리저브
         res_cnt = 0
         if res_input:
             for day_str in res_input.split(','):
                 try:
-                    day = int(day_str.strip())
-                    start_dt = base_date.replace(day=day, hour=0, minute=0, second=0)
+                    start_dt = get_smart_date(last_flight_date, day_str.strip())
                     end_dt = start_dt + timedelta(hours=23, minutes=59)
                     csv_rows.append({
                         "Subject": "Reserve",
@@ -314,18 +350,17 @@ if up_file:
                     res_cnt += 1
                 except: pass
 
-        # [2] 스탠바이
+        # 2. 스탠바이
         stby_cnt = 0
         if stby_data:
             for s_day, s_start, s_end in stby_data:
                 try:
-                    day = int(s_day.strip())
+                    target_date = get_smart_date(last_flight_date, s_day)
                     sh, sm = parse_time_input(s_start)
                     eh, em = parse_time_input(s_end)
-                    
                     if sh is not None and eh is not None:
-                        start_dt = base_date.replace(day=day, hour=sh, minute=sm, second=0)
-                        end_dt = base_date.replace(day=day, hour=eh, minute=em, second=0)
+                        start_dt = target_date.replace(hour=sh, minute=sm, second=0)
+                        end_dt = target_date.replace(hour=eh, minute=em, second=0)
                         if end_dt < start_dt: end_dt += timedelta(days=1)
                         
                         csv_rows.append({
@@ -340,18 +375,15 @@ if up_file:
                         stby_cnt += 1
                 except: pass
 
-        # [3] 비행 및 시뮬레이터 스케줄
+        # 3. 비행 및 시뮬레이터
         for r in rots:
             f1, fL = r[0], r[-1]
-            
-            # 시뮬레이터(SIM) 체크
             is_sim = any(k in f1['flt'].upper() for k in SIM_KEYWORDS)
             
             if is_sim:
-                # 시뮬레이터용 제목 (78RECPT2, ICN 07:00~14:00)
+                # 시뮬레이터 제목 변경
                 subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}~{fL['sta_str'][11:]}"
             else:
-                # 일반 비행용 제목
                 subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}, {f1['arr']}, {fL['arr']} {fL['sta_str'][11:]}"
             
             memo = []
@@ -365,9 +397,7 @@ if up_file:
 
             for i, f in enumerate(r):
                 memo.append(f"★ {f['dep']}-{f['arr']} ★")
-                
-                # 시뮬레이터가 아닐 때만 Show Up 표시
-                if i == 0 and not is_sim:
+                if i == 0 and not is_sim: # 시뮬레이터는 쇼업 제외
                     memo.append(f"{f['dep']} Show Up : {show_up_dt.strftime('%Y-%m-%d %H:%M')} (KST)")
                 
                 blk_dur = "N/A"

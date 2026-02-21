@@ -43,7 +43,7 @@ def clean_str(val):
 def is_valid_name(text):
     if not text: return False
     if text.replace('.', '').isdigit(): return False
-    if text.upper() in ['P1', 'P2', 'F1', 'F2', 'CAP', 'FO', 'DUTY', 'STD', 'STA', 'NAME', 'CREW ID', 'SPECIAL DUTY CODE']: return False
+    if text.upper() in ['P1', 'P2', 'F1', 'F2', 'CAP', 'FO', 'DUTY', 'STD', 'STA', 'NAME', 'CREW ID', 'SPECIAL DUTY CODE', 'TVL', 'FLY']: return False
     if len(text) < 2: return False
     return True
 
@@ -75,7 +75,7 @@ def format_dur(delta):
 
 # --- UI ---
 st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 CSV 변환기 (v2.4 Final)")
+st.title("✈️ KAL B787 로스터 CSV 변환기 (v2.5 Final)")
 
 rank = st.radio("직책 선택 (Per Diem 계산용)", ["CAP (기장)", "FO (부기장)"], horizontal=True)
 is_cap = True if "CAP" in rank else False
@@ -112,15 +112,22 @@ if up_file:
             st.error("'Flight/Activity' 행을 찾을 수 없습니다.")
             st.stop()
 
-        # 헤더 적용 및 Special Duty Code 컬럼 위치 찾기
+        # 헤더 적용
         df.columns = df.iloc[h_idx].apply(clean_str)
         data = df.iloc[h_idx+1:].reset_index(drop=True)
         
-        # [NEW] Special Duty Code 컬럼명 자동 탐지 (이름이 조금 달라도 찾음)
+        # Special Duty Code 컬럼 탐지
         sdc_col_name = None
         for col in df.columns:
             if "special" in str(col).lower() and "duty" in str(col).lower():
                 sdc_col_name = col
+                break
+        
+        # Duty 컬럼 탐지 (TVL 확인용)
+        duty_col_name = None
+        for col in df.columns:
+            if str(col).strip().lower() == "duty":
+                duty_col_name = col
                 break
 
         for _, row in data.iterrows():
@@ -140,7 +147,6 @@ if up_file:
                     
                     std_utc = get_utc_time(row['STD'], dep_port)
                     sta_utc = get_utc_time(row['STA'], arr_port)
-                    std_local_naive = datetime.strptime(str(row['STD']), '%Y-%m-%d %H:%M')
                     
                     key = (f_val, std_str) 
                     
@@ -180,17 +186,25 @@ if up_file:
                                         break
                     if name:
                         r_val = clean_str(row.get('Acting rank'))
-                        p_val = clean_str(row.get('PIC code'))
                         
-                        # [NEW] Special Duty Code 추출 로직 강화
+                        # [NEW] TVL -> Ex 로직 적용
+                        duty_val = ""
+                        if duty_col_name:
+                            duty_val = clean_str(row.get(duty_col_name))
+                        
+                        if duty_val.upper() == "TVL":
+                            p_val = "Ex"
+                        else:
+                            p_val = clean_str(row.get('PIC code'))
+                        
+                        # Special Duty Code
                         sdc = ""
-                        if sdc_col_name: # 탐지된 컬럼명이 있으면 거기서 가져옴
+                        if sdc_col_name:
                              sdc = clean_str(row.get(sdc_col_name))
                         
-                        # 만약 위 방법으로 실패했다면 마지막 컬럼도 한번 체크 (보험용)
+                        # 만약 SDC 컬럼 못찾았으면 마지막 컬럼 시도
                         if not sdc:
                             last_val = clean_str(row.iloc[-1])
-                            # 코드가 15자 이내이고 숫자가 아니거나 특정 형식이면 SDC로 간주
                             if last_val and len(last_val) < 20 and not last_val.isdigit() and last_val != name:
                                 sdc = last_val
 
@@ -262,7 +276,6 @@ if up_file:
                 std_utc_str = f['std_utc'].strftime('%H:%M') if f['std_utc'] else "?"
                 sta_utc_str = f['sta_utc'].strftime('%H:%M') if f['sta_utc'] else "?"
                 
-                # 메모 형식: 줄바꿈 및 전체 날짜 표기
                 memo.append(f"{f['flt']}: {f['std_str']} (UTC {std_utc_str})")
                 memo.append(f"-> {f['sta_str']} (UTC {sta_utc_str}) (A/C: {f['ac']})")
                 memo.append(f"Block Time : {blk_dur}")

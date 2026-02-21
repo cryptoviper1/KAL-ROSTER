@@ -75,7 +75,7 @@ def format_dur(delta):
 
 # --- UI ---
 st.set_page_config(page_title="KAL Roster to CSV", page_icon="✈️")
-st.title("✈️ KAL B787 로스터 CSV 변환기 (v2.3)")
+st.title("✈️ KAL B787 로스터 CSV 변환기 (v2.4 Final)")
 
 rank = st.radio("직책 선택 (Per Diem 계산용)", ["CAP (기장)", "FO (부기장)"], horizontal=True)
 is_cap = True if "CAP" in rank else False
@@ -101,6 +101,7 @@ if up_file:
         else:
             df = pd.read_excel(up_file, header=None)
         
+        # 헤더 행 찾기
         h_idx = -1
         for i, row in df.iterrows():
             if row.astype(str).str.contains('Flight/Activity').any():
@@ -111,8 +112,16 @@ if up_file:
             st.error("'Flight/Activity' 행을 찾을 수 없습니다.")
             st.stop()
 
+        # 헤더 적용 및 Special Duty Code 컬럼 위치 찾기
         df.columns = df.iloc[h_idx].apply(clean_str)
         data = df.iloc[h_idx+1:].reset_index(drop=True)
+        
+        # [NEW] Special Duty Code 컬럼명 자동 탐지 (이름이 조금 달라도 찾음)
+        sdc_col_name = None
+        for col in df.columns:
+            if "special" in str(col).lower() and "duty" in str(col).lower():
+                sdc_col_name = col
+                break
 
         for _, row in data.iterrows():
             f_val = clean_str(row.get('Flight/Activity', ''))
@@ -173,15 +182,18 @@ if up_file:
                         r_val = clean_str(row.get('Acting rank'))
                         p_val = clean_str(row.get('PIC code'))
                         
-                        # Special Duty Code 처리 (헤더 이름을 찾거나 없으면 마지막 컬럼 시도)
+                        # [NEW] Special Duty Code 추출 로직 강화
                         sdc = ""
-                        if 'Special Duty Code' in row:
-                            sdc = clean_str(row.get('Special Duty Code'))
-                        else:
-                            # 컬럼명이 정확하지 않은 경우 마지막 유효한 값 확인
-                            # (보통 엑셀 마지막 컬럼이 SDC인 경우가 많음)
-                            pass 
+                        if sdc_col_name: # 탐지된 컬럼명이 있으면 거기서 가져옴
+                             sdc = clean_str(row.get(sdc_col_name))
                         
+                        # 만약 위 방법으로 실패했다면 마지막 컬럼도 한번 체크 (보험용)
+                        if not sdc:
+                            last_val = clean_str(row.iloc[-1])
+                            # 코드가 15자 이내이고 숫자가 아니거나 특정 형식이면 SDC로 간주
+                            if last_val and len(last_val) < 20 and not last_val.isdigit() and last_val != name:
+                                sdc = last_val
+
                         info_parts = [x for x in [c_id, r_val, p_val] if x]
                         info_str = ", ".join(info_parts)
                         sdc_str = f" [{sdc}]" if sdc else ""
@@ -250,7 +262,7 @@ if up_file:
                 std_utc_str = f['std_utc'].strftime('%H:%M') if f['std_utc'] else "?"
                 sta_utc_str = f['sta_utc'].strftime('%H:%M') if f['sta_utc'] else "?"
                 
-                # [수정] 도착 시간 줄바꿈 및 전체 날짜 표기
+                # 메모 형식: 줄바꿈 및 전체 날짜 표기
                 memo.append(f"{f['flt']}: {f['std_str']} (UTC {std_utc_str})")
                 memo.append(f"-> {f['sta_str']} (UTC {sta_utc_str}) (A/C: {f['ac']})")
                 memo.append(f"Block Time : {blk_dur}")
@@ -286,7 +298,6 @@ if up_file:
         res_df = pd.DataFrame(csv_rows)
         csv_buffer = res_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
 
-        # [수정] 다운로드 상태 표시 로직
         st.info("🟦 변환 완료! 아래 버튼을 눌러 다운로드를 시작하세요.")
         
         if st.download_button(

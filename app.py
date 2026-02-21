@@ -144,10 +144,10 @@ def generate_ics(events):
 
 
 # --- UI ---
-st.set_page_config(page_title="KAL Roster to CSV Ver 1.0", page_icon="✈️")
-st.title("✈️ KAL Roster to CSV Ver 1.0")
+st.set_page_config(page_title="KAL Roster to CSV Ver 1.2", page_icon="✈️")
+st.title("✈️ KAL Roster to CSV Ver 1.2")
 
-# [NEW] 사용법 배너 추가
+# 사용법 배너
 with st.expander("📘 사용법 읽어보기 (Click)"):
     st.markdown("""
     **1. 스케줄 파일 준비 (iFlight CWP)**
@@ -436,9 +436,13 @@ if up_file:
             is_sim = any(k in f1['flt'].upper() for k in SIM_KEYWORDS)
             
             if is_sim:
+                # 시뮬레이터 제목
                 subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}~{fL['sta_str'][11:]}"
             else:
-                subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}, {f1['arr']}, {fL['arr']} {fL['sta_str'][11:]}"
+                # [수정] 일반 비행 제목: 중간 경유지 모두 포함 (Multi-leg 지원)
+                # 로테이션의 모든 도착지(arr)를 콤마로 연결
+                route_path = ",".join([f['arr'] for f in r])
+                subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]} {route_path} {fL['sta_str'][11:]}"
             
             memo = []
             off = timedelta(hours=1, minutes=35) if f1['dep']=='ICN' else timedelta(hours=1, minutes=40)

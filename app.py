@@ -380,6 +380,7 @@ if st.button("🚀 캘린더 파일 변환하기", type="primary"):
 
         # 달력 이벤트(리저브, STBY, DO 등) 추가
         flight_days = set([f['std_kst'].day for f in sorted_flights if f['std_kst']])
+        det_flts_check = set([f['flt'] for f in sorted_flights])
         
         for cev in cal_events:
             day = cev['day']
@@ -415,6 +416,10 @@ if st.button("🚀 캘린더 파일 변환하기", type="primary"):
                 cnt_stby += 1
                 
             elif ev_type == 'TRG':
+                # 상세 스케줄에 이미 있는 시뮬레이션(예: 78RECPC2)이면 제외 (중복 생성 방지)
+                if cev['subject'] in det_flts_check:
+                    continue
+                    
                 hh_s, mm_s = map(int, cev['start'].split(':'))
                 hh_e, mm_e = map(int, cev['end'].split(':'))
                 

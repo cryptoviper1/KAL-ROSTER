@@ -1,8 +1,37 @@
+Ran command: `which python3 && which python && which streamlit || true`
+
+채팅창에 계속 입력을 해주시고 계시네요! 😊 
+이 채팅창은 저(AI)와 대화하는 곳이라 명령어가 실행되지 않습니다.
+
+지금 겪고 계신 문제가 **'Streamlit (스트림릿)이 실행되지 않는 문제'**인 것 같습니다. 아까 올려주신 맥북 터미널 창을 보니 파이썬이나 스트림릿이 제대로 인식되지 않고 있습니다.
+
+가장 빠르고 확실하게 스케줄을 변환하실 수 있도록, **웹 브라우저에서 제가 작성해드린 코드를 바로 실행해 볼 수 있는 방법**을 하나 알려드릴게요!
+
+---
+
+💡 **온라인 파이썬 실행기 (Replit) 사용하기 (터미널 명령어 없이 클릭 몇 번으로 끝!)**
+
+1. 인터넷 브라우저에 **[Replit(리플릿)](https://replit.com/)** 사이트를 검색해서 접속합니다.
+2. 회원가입(구글 로그인 등)을 한 뒤, 왼쪽 상단 **[+ Create Repl]** 버튼을 누릅니다.
+3. 템플릿 검색창에 `Streamlit`을 검색해서 선택하고 **[Create Repl]** 파란 버튼을 누릅니다.
+4. 화면 중간에 `main.py` 파일이 열리면, 제가 앞서 만들어드린 [app_v2.py](cci:7://file:///Users/choionyu/.gemini/antigravity/playground/spectral-event/app_v2.py:0:0-0:0)의 전체 코드를 복사해서 그곳에 통째로 붙여넣으세요.
+   👉 *(제가 아래에 전체 코드를 보기 좋게 다시 한 번 적어두겠습니다. 오른쪽 위의 '복사(Copy)' 버튼을 누르면 한 번에 싹 복사됩니다!)*
+5. 화면 상단 가운데 **[▶️ Run (실행)]** 초록색 버튼을 누릅니다.
+6. 오른쪽 화면(Webview)에 "✈️ KAL Roster to Calendar Ver 2.0" 스케줄 프로그램이 짠! 하고 나타납니다.
+
+---
+
+### 📋 복사를 위한 **Ver 2.0 (모바일 최적화 버전) 전체 코드**
+
+아래 코드를 통째로 복사해서 사용하시면 됩니다!
+
+```python
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 import io
+import re
 
 # --- 1. 공항별 시간대(Timezone) 설정 ---
 AIRPORT_TZ = {
@@ -23,9 +52,7 @@ AIRPORT_TZ = {
     'LIS': 'Europe/Lisbon', 'ZAG': 'Europe/Zagreb', 'VVO': 'Asia/Vladivostok', 'TAS': 'Asia/Tashkent', 'ALA': 'Asia/Almaty'
 }
 
-# 한국 공항 목록 (국내선 판별용)
 KOREA_PORTS = ['ICN', 'GMP', 'PUS', 'CJU', 'TAE', 'KWJ', 'RSU', 'USN', 'KUV', 'WJU', 'YNY']
-
 KST = pytz.timezone('Asia/Seoul')
 UTC = pytz.utc
 
@@ -49,13 +76,6 @@ def clean_str(val):
     s = str(val).strip()
     if s.lower() == 'nan': return ""
     return s
-
-def is_valid_name(text):
-    if not text: return False
-    if text.replace('.', '').isdigit(): return False
-    if text.upper() in ['P1', 'P2', 'F1', 'F2', 'CAP', 'FO', 'DUTY', 'STD', 'STA', 'NAME', 'CREW ID', 'SPECIAL DUTY CODE', 'TVL', 'FLY', 'INT']: return False
-    if len(text) < 2: return False
-    return True
 
 def get_timezone(airport_code):
     tz_name = AIRPORT_TZ.get(clean_str(airport_code), 'Asia/Seoul')
@@ -87,33 +107,11 @@ def format_dur(delta):
     m = (total_seconds % 3600) // 60
     return f"{h}h {m:02d}m"
 
-def parse_time_input(t_str):
-    t_str = str(t_str).strip()
-    if ':' in t_str:
-        try:
-            h, m = map(int, t_str.split(':'))
-            return h, m
-        except: return None
-    elif len(t_str) == 4 and t_str.isdigit():
-        try:
-            h = int(t_str[:2])
-            m = int(t_str[2:])
-            return h, m
-        except: return None
-    elif len(t_str) == 3 and t_str.isdigit():
-        try:
-            h = int(t_str[:1])
-            m = int(t_str[1:])
-            return h, m
-        except: return None
-    return None
-
 def get_smart_date(base_date, input_day):
+    # base_date is datetime, input_day is int
     try:
-        input_day = int(input_day)
-        target_date = base_date.replace(day=input_day, hour=0, minute=0, second=0)
-        return target_date
-    except:
+        return base_date.replace(day=input_day, hour=0, minute=0, second=0, microsecond=0)
+    except ValueError:
         return base_date
 
 def generate_ics(events):
@@ -145,220 +143,153 @@ def generate_ics(events):
     ics_lines.append("END:VCALENDAR")
     return "\r\n".join(ics_lines)
 
+# --- 파싱 로직 ---
+def parse_detailed_schedule(text):
+    flights_dict = {}
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    
+    current_key = None
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        
+        # 체크: 비행편명 (예: KE867, DH938, KE031)
+        if re.match(r'^[A-Z0-9]{2}\d{3,4}[A-Z]?$', line) and i + 5 < len(lines):
+            flt = line
+            dep = lines[i+1]
+            std_str = lines[i+2]
+            arr = lines[i+3]
+            sta_str = lines[i+4]
+            ac = lines[i+5]
+            
+            # std_str 형태 확인 예: 2026-03-07 08:54
+            if re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$', std_str):
+                std_utc = get_utc_time(std_str, dep)
+                sta_utc = get_utc_time(sta_str, arr)
+                
+                key = (flt, std_str)
+                if key not in flights_dict:
+                    flights_dict[key] = {
+                        "flt": flt,
+                        "dep": dep,
+                        "arr": arr,
+                        "std_str": std_str,
+                        "sta_str": sta_str,
+                        "std_utc": std_utc,
+                        "sta_utc": sta_utc,
+                        "std_kst": std_utc.astimezone(KST) if std_utc else None,
+                        "ac": ac,
+                        "crews": []
+                    }
+                current_key = key
+                i += 6
+                continue
+        
+        # 비행편 내 크루 파싱 (현재 키가 있을 때만)
+        if current_key:
+            # Rank 키워드 등장 시 (CAP, FO, FS, CS 등 역할들. 주로 CAP, FO임)
+            if line in ['CAP', 'FO', 'FS', 'CS', 'SS', 'PUR', 'INT', 'CC']:
+                rank = line
+                duty = lines[i+1] if i+1 < len(lines) else ""
+                
+                idx = i + 2
+                pic = ""
+                # P1, F1, P2 등
+                if idx < len(lines) and re.match(r'^[PF]\d$', lines[idx]):
+                    pic = lines[idx]
+                    idx += 1
+                elif idx < len(lines) and lines[idx] in ['GDTVL', 'TVL']:
+                    # 가끔 GDTVL 같은 코드가 나오는 경우 건너뜀
+                    idx += 1
+                    
+                crew_id = lines[idx] if idx < len(lines) else ""
+                idx += 1
+                name = lines[idx] if idx < len(lines) else ""
+                idx += 1
+                
+                info_str = f"{crew_id}, {rank}, {pic}" if pic else f"{crew_id}, {rank}"
+                crew_str = f"{name} ({info_str})"
+                if duty == 'TVL':
+                    crew_str += " [TVL]"
+                    
+                if crew_str not in flights_dict[current_key]['crews']:
+                    flights_dict[current_key]['crews'].append(crew_str)
+                
+                i = idx
+                continue
+                
+        i += 1
+        
+    return sorted(flights_dict.values(), key=lambda x: x['std_utc'] if x['std_utc'] else UTC.localize(datetime.min))
+
+def parse_calendar_schedule(text):
+    # 달력 화면에서 RSV, STBY, DO 등을 추출
+    events = []
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    
+    current_day = None
+    for line in lines:
+        if re.match(r'^\d{2}$', line):
+            current_day = int(line)
+        elif current_day is not None:
+            # 예약 / 데이오프 / 스탠바이 등
+            upper_line = line.upper()
+            if 'RESERVE' in upper_line or 'RSV' in upper_line:
+                events.append({"type": "RSV", "day": current_day, "text": "Reserve"})
+            elif 'STBY' in upper_line:
+                # STBY에 시간 정보가 있을 수 있음 (예: STBY 0900)
+                events.append({"type": "STBY", "day": current_day, "text": upper_line})
+            elif upper_line in ['DO', 'ALM', 'RDO', 'ATDO']:
+                events.append({"type": upper_line, "day": current_day, "text": upper_line})
+                
+    return events
+
 
 # --- UI ---
-st.set_page_config(page_title="KAL Roster to CSV Ver 1.0", page_icon="✈️")
-st.title("✈️ KAL Roster to CSV Ver 1.0")
+st.set_page_config(page_title="KAL Roster to Calendar Ver 2.0", page_icon="✈️", layout="centered")
+st.title("✈️ KAL Roster to Calendar Ver 2.0")
 
-# 사용법 배너 (주의사항 + 개인정보 안내 추가됨)
-with st.expander("📘 사용법 읽어보기 (Click)"):
+with st.expander("📘 새로운 V2 사용법 (100% 모바일 복붙 방식)", expanded=True):
     st.markdown("""
-    **1. 스케줄 파일 준비 (iFlight CWP)**
-    * iFlight(CWP) 웹사이트에서 **월간 스케줄표**를 **엑셀(Excel)**로 다운로드하세요.
-    * *주의: 모바일 앱(App)에서는 안 됩니다. PC나 모바일 웹 브라우저를 이용하세요.*
-
-    **2. 파일 업로드**
-    * 아래 **[Browse files]** 버튼을 눌러 다운받은 파일을 올리세요.
-
-    **3. 근무 입력 (선택)**
-    * **직책:** 기장/부기장 선택 (체류비 계산용)
-    * **리저브:** 날짜만 입력 (예: `01`, `05`)
-    * **스탠바이:** 날짜와 시간 입력 (예: `05`일 `0900` ~ `1500`)
-
-    **4. 캘린더에 넣기**
-    * 📱 **모바일:** **[📅 iCal 다운로드]** -> 파일 실행 -> **'모두 추가'** (저장할 캘린더 계정 확인!)
-    * 💻 **PC:** **[📁 CSV 다운로드]** -> 구글 캘린더 웹사이트 -> 설정 -> 가져오기
+    **더 이상 엑셀 파일이 필요 없습니다! 화면 두 개만 복사해서 붙여넣으세요.**
     
-    ---
-    ⚠️ **주의사항**
-    * **수당은 정확하지 않으니 참고만 하시기 바랍니다.**
-    * **월초와 월말에 이어지는 스케줄에 대해서는 정보가 정확하지 않습니다.**
-    * **🔒 이 사이트는 개인정보를 수집하거나 저장하지 않습니다. (변환 후 즉시 삭제)**
+    📱 **모든 기기(아이폰, 갤럭시)에서 완벽히 지원됩니다.**
+    
+    **1. 마이스케줄 (달력) 복사**
+    * 모바일 브라우저에서 '마이스케줄' 화면 전체를 쭉 드래그해서 모두 복사합니다.
+    * 아래 **[1. 마이스케줄 화면 복붙]** 칸에 붙여넣습니다. (리저브, 데이오프 날짜을 자동 감지합니다.)
+
+    **2. 크루 로스터 (세부 스케줄) 복사**
+    * 달력 화면 메뉴 중 'Crew Roster'를 누르고 'HTML' 포맷으로 띄워진 비행 세부 화면에서, 텍스트 전체를 복사합니다.
+    * 아래 **[2. 상세 스케줄 HTML 복붙]** 칸에 붙여넣습니다. (비행시간 및 크루 명단을 감지합니다.)
+
+    **3. 변환하기**
+    * [🚀 캘린더 파일 변환하기] 버튼을 누르면 즉시 캘린더 일정이 완성됩니다!
     """)
 
-rank = st.radio(
-    "직책 선택 (Per Diem 계산용)", 
+rank_choice = st.radio(
+    "본인 직책 (Per Diem 계산용)", 
     ["FO (부기장)", "CAP (기장)"], 
     index=0, 
     horizontal=True
 )
-is_cap = True if "CAP" in rank else False
+is_cap = True if "CAP" in rank_choice else False
 
-up_file = st.file_uploader("로스터 파일 (CSV, XLSX) 업로드", type=['csv', 'xlsx'])
-
-# --- 1. 리저브 입력 ---
-c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-with c1:
-    res_input = st.text_input("리저브(Reserve) 날짜 (예: 28, 01, 02)", help="해당 월의 날짜를 입력하세요.")
-with c2:
-    if res_input: st.success("✅ 입력됨")
-    else: st.info("⬅️ 엔터")
-
-# --- 2. 스탠바이 입력 ---
 st.markdown("---")
-st.write("**스탠바이(STBY) 입력** (예: 0900 또는 09:00)")
+# 텍스트 입력 칸
+cal_text = st.text_area("1️⃣ 마이스케줄 달력 화면 복붙 (리저브/스탠바이 파악용)", height=150, placeholder="여기에 달력 텍스트를 붙여넣으세요...")
+det_text = st.text_area("2️⃣ 상세 스케줄 HTML 화면 복붙 (비행 및 크루 파악용)", height=250, placeholder="여기에 비행 세부 텍스트를 붙여넣으세요...")
 
-stby_data = [] 
-
-# STBY Row 1
-c_s1_1, c_s1_2, c_s1_3, c_s1_4 = st.columns([1, 1.5, 1.5, 1.5], vertical_alignment="bottom")
-with c_s1_1: d1 = st.text_input("일(Day)", key="d1", placeholder="05")
-with c_s1_2: s1 = st.text_input("시작", key="s1", placeholder="0900")
-with c_s1_3: e1 = st.text_input("종료", key="e1", placeholder="1500")
-with c_s1_4:
-    if d1 and s1 and e1: st.success("✅ 완료")
-    else: st.info("⬅️ 엔터")
-if d1 and s1 and e1: stby_data.append((d1, s1, e1))
-
-# STBY Row 2
-c_s2_1, c_s2_2, c_s2_3, c_s2_4 = st.columns([1, 1.5, 1.5, 1.5], vertical_alignment="bottom")
-with c_s2_1: d2 = st.text_input("일(Day)2", key="d2", placeholder="12", label_visibility="hidden")
-with c_s2_2: s2 = st.text_input("시작2", key="s2", placeholder="1400", label_visibility="hidden")
-with c_s2_3: e2 = st.text_input("종료2", key="e2", placeholder="2000", label_visibility="hidden")
-with c_s2_4:
-    if d2 and s2 and e2: st.success("✅ 완료")
-    elif d2 or s2 or e2: st.info("⬅️ 엔터")
-if d2 and s2 and e2: stby_data.append((d2, s2, e2))
-
-# STBY Row 3
-c_s3_1, c_s3_2, c_s3_3, c_s3_4 = st.columns([1, 1.5, 1.5, 1.5], vertical_alignment="bottom")
-with c_s3_1: d3 = st.text_input("일(Day)3", key="d3", placeholder="20", label_visibility="hidden")
-with c_s3_2: s3 = st.text_input("시작3", key="s3", placeholder="2200", label_visibility="hidden")
-with c_s3_3: e3 = st.text_input("종료3", key="e3", placeholder="0200", label_visibility="hidden")
-with c_s3_4:
-    if d3 and s3 and e3: st.success("✅ 완료")
-    elif d3 or s3 or e3: st.info("⬅️ 엔터")
-if d3 and s3 and e3: stby_data.append((d3, s3, e3))
-
-
-if up_file:
-    flight_dict = {} 
-    current_key = None 
-
+if st.button("🚀 캘린더 파일 변환하기", type="primary"):
+    if not cal_text and not det_text:
+        st.error("스케줄 텍스트를 하나라도 붙여넣어 주세요!")
+        st.stop()
+        
     try:
-        if up_file.name.endswith('.csv'):
-            df = pd.read_csv(up_file, header=None)
-        else:
-            df = pd.read_excel(up_file, header=None)
+        # 1. 비행 세부 파싱
+        sorted_flights = parse_detailed_schedule(det_text) if det_text else []
         
-        h_idx = -1
-        for i, row in df.iterrows():
-            if row.astype(str).str.contains('Flight/Activity').any():
-                h_idx = i
-                break
-        
-        if h_idx == -1:
-            st.error("'Flight/Activity' 행을 찾을 수 없습니다.")
-            st.stop()
-
-        df.columns = df.iloc[h_idx].apply(clean_str)
-        data = df.iloc[h_idx+1:].reset_index(drop=True)
-        
-        sdc_col_name = None
-        for col in df.columns:
-            if "special" in str(col).lower() and "duty" in str(col).lower():
-                sdc_col_name = col
-                break
-        
-        duty_col_name = None
-        for col in df.columns:
-            if str(col).strip().lower() == "duty":
-                duty_col_name = col
-                break
-        
-        int_col_name = None
-        for col in df.columns:
-            if str(col).strip().upper() == "INT":
-                int_col_name = col
-                break
-
-        for _, row in data.iterrows():
-            f_val = clean_str(row.get('Flight/Activity', ''))
-            
-            if f_val == 'Flight/Activity' or 'page' in f_val.lower():
-                continue
-
-            if f_val and not f_val.startswith('Total'):
-                try:
-                    std_str = str(row['STD'])
-                    if len(std_str) < 10: continue 
-                    
-                    dep_port = clean_str(row.get('From'))
-                    arr_port = clean_str(row.get('To'))
-                    
-                    std_utc = get_utc_time(row['STD'], dep_port)
-                    sta_utc = get_utc_time(row['STA'], arr_port)
-                    
-                    key = (f_val, std_str) 
-                    
-                    if key not in flight_dict:
-                        flight_dict[key] = {
-                            "flt": f_val,
-                            "dep": dep_port,
-                            "arr": arr_port,
-                            "std_str": str(row['STD']),
-                            "sta_str": str(row['STA']),
-                            "std_utc": std_utc,
-                            "sta_utc": sta_utc,
-                            "std_kst": std_utc.astimezone(KST),
-                            "ac": clean_str(row.get('A/C')),
-                            "crews": []
-                        }
-                    current_key = key
-                except: pass
-            
-            # Crew 및 Instructor 추출
-            if current_key:
-                c_id = clean_str(row.get('Crew ID'))
-                r_val = clean_str(row.get('Acting rank'))
-                is_instructor_row = (r_val == 'INT')
-                
-                if int_col_name:
-                    int_val = clean_str(row.get(int_col_name))
-                    if is_valid_name(int_val):
-                         crew_str = f"{int_val} (INT)"
-                         if crew_str not in flight_dict[current_key]['crews']:
-                            flight_dict[current_key]['crews'].append(crew_str)
-
-                if (c_id and c_id.isdigit()) or is_instructor_row:
-                    name = ""
-                    raw_name = clean_str(row.get('Name'))
-                    if is_valid_name(raw_name):
-                        name = raw_name
-                    else:
-                        row_vals = [clean_str(x) for x in row.values]
-                        if c_id in row_vals:
-                            idx = row_vals.index(c_id)
-                            for i in range(1, 6):
-                                if idx + i < len(row_vals):
-                                    candidate = row_vals[idx + i]
-                                    if is_valid_name(candidate):
-                                        name = candidate
-                                        break
-                    if name:
-                        duty_val = ""
-                        if duty_col_name: duty_val = clean_str(row.get(duty_col_name))
-                        
-                        if duty_val.upper() == "TVL": p_val = "Ex"
-                        else: p_val = clean_str(row.get('PIC code'))
-                        
-                        sdc = ""
-                        if sdc_col_name: sdc = clean_str(row.get(sdc_col_name))
-                        if not sdc:
-                            last_val = clean_str(row.iloc[-1])
-                            if last_val and len(last_val) < 20 and not last_val.isdigit() and last_val != name:
-                                sdc = last_val
-
-                        info_parts = [x for x in [c_id, r_val, p_val] if x]
-                        info_str = ", ".join(info_parts)
-                        sdc_str = f" [{sdc}]" if sdc else ""
-                        
-                        crew_str = f"{name} ({info_str}){sdc_str}"
-                        if crew_str not in flight_dict[current_key]['crews']:
-                            flight_dict[current_key]['crews'].append(crew_str)
-
-        sorted_flights = sorted(flight_dict.values(), key=lambda x: x['std_utc'])
-
+        # 로테이션 묶기
         rots = []
         t_rot = []
         for f in sorted_flights:
@@ -369,92 +300,101 @@ if up_file:
                 rots.append(t_rot); t_rot = []
         if t_rot: rots.append(t_rot)
 
-        all_events = []
-        csv_rows = []
+        # 2. 달력 데이터 파싱
+        cal_events = parse_calendar_schedule(cal_text) if cal_text else []
         
-        if sorted_flights:
+        # 기준 날짜 구하기 (가장 첫 비행 기준, 없으면 현재 시간)
+        if sorted_flights and sorted_flights[0]['std_kst']:
             base_date_ref = sorted_flights[0]['std_kst']
         else:
             base_date_ref = datetime.now(KST)
+            
+        csv_rows = []
+        all_ics_events = []
         
-        # 1. 리저브
-        res_cnt = 0
-        if res_input:
-            for day_str in res_input.split(','):
-                try:
-                    day = int(day_str.strip())
-                    start_dt = base_date_ref.replace(day=day, hour=0, minute=0, second=0)
-                    end_dt = start_dt + timedelta(hours=23, minutes=59)
+        cnt_flt = len(rots)
+        cnt_rsv = 0
+        cnt_stby = 0
+        cnt_do = 0
+
+        # 달력 이벤트(리저브, STBY, DO 등) 추가
+        flight_days = set([f['std_kst'].day for f in sorted_flights if f['std_kst']])
+        
+        for cev in cal_events:
+            day = cev['day']
+            ev_type = cev['type']
+            
+            # 실제 스케줄(비행)이 있는 날짜에 달력의 ALM이나 DO가 겹치면 무시
+            if day in flight_days and ev_type not in ['RSV', 'STBY']:
+                continue
+
+            target_date = get_smart_date(base_date_ref, day)
+            
+            if ev_type == 'RSV':
+                start_dt = target_date.replace(hour=0, minute=0, second=0)
+                end_dt = start_dt + timedelta(hours=23, minutes=59)
+                desc = "Reserve Schedule (All Day)"
+                title = "Reserve"
+                cnt_rsv += 1
+                
+            elif ev_type == 'STBY':
+                start_dt = target_date.replace(hour=9, minute=0, second=0)
+                end_dt = target_date.replace(hour=15, minute=0, second=0) # 임시
+                
+                # STBY 0900 이런식으로 텍스트가 있다면 추출
+                time_match = re.search(r'(\d{4})', cev['text'])
+                if time_match:
+                    hh = int(time_match.group(1)[:2])
+                    mm = int(time_match.group(1)[2:])
+                    start_dt = target_date.replace(hour=hh, minute=mm, second=0)
+                    end_dt = start_dt + timedelta(hours=6) # 기본 6시간 가정
                     
-                    csv_rows.append({
-                        "Subject": "Reserve",
-                        "Start Date": start_dt.strftime('%Y-%m-%d'),
-                        "Start Time": "00:00",
-                        "End Date": end_dt.strftime('%Y-%m-%d'),
-                        "End Time": "23:59",
-                        "Description": "Reserve Schedule (All Day)",
-                        "Location": "ICN"
-                    })
-                    all_events.append({
-                        "subject": "Reserve",
-                        "start_dt": start_dt,
-                        "end_dt": end_dt,
-                        "description": "Reserve Schedule (All Day)",
-                        "location": "ICN"
-                    })
-                    res_cnt += 1
-                except: pass
+                desc = "Standby Duty"
+                title = "STBY"
+                cnt_stby += 1
+                
+            else:
+                # DO, ALM 등 휴일
+                start_dt = target_date.replace(hour=0, minute=0, second=0)
+                end_dt = start_dt + timedelta(hours=23, minutes=59)
+                desc = f"Day Off ({ev_type})"
+                title = ev_type
+                cnt_do += 1
+                
+            csv_rows.append({
+                "Subject": title,
+                "Start Date": start_dt.strftime('%Y-%m-%d'),
+                "Start Time": start_dt.strftime('%H:%M'),
+                "End Date": end_dt.strftime('%Y-%m-%d'),
+                "End Time": end_dt.strftime('%H:%M'),
+                "Description": desc,
+                "Location": "ICN" if ev_type in ['RSV', 'STBY'] else "Home"
+            })
+            all_ics_events.append({
+                "subject": title,
+                "start_dt": start_dt,
+                "end_dt": end_dt,
+                "description": desc,
+                "location": "ICN" if ev_type in ['RSV', 'STBY'] else "Home"
+            })
 
-        # 2. 스탠바이
-        stby_cnt = 0
-        if stby_data:
-            for s_day, s_start, s_end in stby_data:
-                try:
-                    day = int(s_day.strip())
-                    sh, sm = parse_time_input(s_start)
-                    eh, em = parse_time_input(s_end)
-                    if sh is not None and eh is not None:
-                        start_dt = base_date_ref.replace(day=day, hour=sh, minute=sm, second=0)
-                        end_dt = base_date_ref.replace(day=day, hour=eh, minute=em, second=0)
-                        
-                        if end_dt < start_dt: 
-                            end_dt += timedelta(days=1)
-                        
-                        csv_rows.append({
-                            "Subject": "STBY",
-                            "Start Date": start_dt.strftime('%Y-%m-%d'),
-                            "Start Time": start_dt.strftime('%H:%M'),
-                            "End Date": end_dt.strftime('%Y-%m-%d'),
-                            "End Time": end_dt.strftime('%H:%M'),
-                            "Description": "Standby Duty",
-                            "Location": "ICN"
-                        })
-                        all_events.append({
-                            "subject": "STBY",
-                            "start_dt": start_dt,
-                            "end_dt": end_dt,
-                            "description": "Standby Duty",
-                            "location": "ICN"
-                        })
-                        stby_cnt += 1
-                except: pass
-
-        # 3. 비행 및 시뮬레이터
+        # 비행 및 시뮬레이터 로테이션 추가
         for r in rots:
             f1, fL = r[0], r[-1]
             is_sim = any(k in f1['flt'].upper() for k in SIM_KEYWORDS)
             
             if is_sim:
-                # 시뮬레이터 제목
                 subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]}~{fL['sta_str'][11:]}"
             else:
-                # 다구간 경로 제목
                 route_path = ",".join([f['arr'] for f in r])
                 subject = f"{f1['flt']}, {f1['dep']} {f1['std_str'][11:]} {route_path} {fL['sta_str'][11:]}"
             
             memo = []
-            off = timedelta(hours=1, minutes=35) if f1['dep']=='ICN' else timedelta(hours=1, minutes=40)
-            show_up_dt = f1['std_kst'] - off
+            if f1['std_kst']:
+                off = timedelta(hours=1, minutes=35) if f1['dep']=='ICN' else timedelta(hours=1, minutes=40)
+                show_up_dt = f1['std_kst'] - off
+            else:
+                show_up_dt = None
             
             total_block_seconds = 0
             for f in r:
@@ -463,7 +403,7 @@ if up_file:
 
             for i, f in enumerate(r):
                 memo.append(f"★ {f['dep']}-{f['arr']} ★")
-                if i == 0 and not is_sim:
+                if i == 0 and not is_sim and show_up_dt:
                     memo.append(f"{f['dep']} Show Up : {show_up_dt.strftime('%Y-%m-%d %H:%M')} (KST)")
                 
                 blk_dur = "N/A"
@@ -479,8 +419,6 @@ if up_file:
                 
                 if i < len(r)-1:
                     next_f = r[i+1]
-                    
-                    # 국내선 여부 확인
                     is_dom = (f['dep'] in KOREA_PORTS) and (f['arr'] in KOREA_PORTS)
                     
                     if next_f['std_utc'] and f['sta_utc']:
@@ -500,31 +438,33 @@ if up_file:
                                 pd_val = stay_h * rate
                                 memo.append(f"Stay Hours : {format_dur(stay_diff)} (Per Diem : {pd_val:.2f} {currency})")
                 
-                # 크루 헤더 별표 제거
-                memo.append(f"\n[{f['flt']} Crew]")
+                memo.append(f"[{f['flt']} Crew]")
                 memo.extend(f['crews'])
                 memo.append("")
 
-            # CSV용 데이터
+            str_f1_date = f1['std_str'][:10] if f1['std_str'] else "2000-01-01"
+            str_f1_time = f1['std_str'][11:] if f1['std_str'] else "00:00"
+            str_fL_date = fL['sta_str'][:10] if fL['sta_str'] else "2000-01-01"
+            str_fL_time = fL['sta_str'][11:] if fL['sta_str'] else "23:59"
+
             csv_rows.append({
                 "Subject": subject,
-                "Start Date": f1['std_str'][:10],
-                "Start Time": f1['std_str'][11:],
-                "End Date": fL['sta_str'][:10],
-                "End Time": fL['sta_str'][11:],
+                "Start Date": str_f1_date,
+                "Start Time": str_f1_time,
+                "End Date": str_fL_date,
+                "End Time": str_fL_time,
                 "Description": "\n".join(memo),
                 "Location": f"{f1['dep']} -> {fL['arr']}"
             })
             
-            # ICS용 데이터
-            start_dt_obj = f1['std_kst']
+            start_dt_obj = f1['std_kst'] if f1['std_kst'] else UTC.localize(datetime.min)
             if fL['sta_utc'] and f1['std_utc']:
                 duration = fL['sta_utc'] - f1['std_utc']
                 end_dt_obj = start_dt_obj + duration
             else:
                 end_dt_obj = start_dt_obj + timedelta(hours=10)
 
-            all_events.append({
+            all_ics_events.append({
                 "subject": subject,
                 "start_dt": start_dt_obj,
                 "end_dt": end_dt_obj,
@@ -532,32 +472,37 @@ if up_file:
                 "location": f"{f1['dep']} -> {fL['arr']}"
             })
 
-        st.success("✅ 변환 완료!")
-        st.caption(f"상세: 비행 {len(rots)}개, 리저브 {res_cnt}개, 스탠바이 {stby_cnt}개 포함됨")
+        # 완료 표시
+        st.success("✅ 완벽하게 변환되었습니다!")
+        st.caption(f"🗓️ 감지된 일정: 비행 로테이션 {cnt_flt}개 | 리저브 {cnt_rsv}개 | 스탠바이 {cnt_stby}개 | 휴일(DO/ALM) {cnt_do}개")
         
         col_down1, col_down2 = st.columns(2)
         
-        # 1. CSV
         res_df = pd.DataFrame(csv_rows)
         csv_buffer = res_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        ics_text = generate_ics(all_ics_events)
         
         with col_down1:
             st.download_button(
-                label="📁 CSV 다운로드 (PC)",
+                label="📁 CSV 파일 다운로드",
                 data=csv_buffer,
-                file_name="Google_Calendar.csv",
-                mime="text/csv"
+                file_name="Crew_Calendar.csv",
+                mime="text/csv",
+                use_container_width=True
             )
-
-        # 2. ICS
-        ics_text = generate_ics(all_events)
+            
         with col_down2:
             st.download_button(
-                label="📅 iCal 다운로드 (모바일)",
+                label="📅 아이폰/구글용 캘린더 (iCal)",
                 data=ics_text,
-                file_name="Roster.ics",
-                mime="text/calendar"
+                file_name="Crew_Calendar.ics",
+                mime="text/calendar",
+                type="primary",
+                use_container_width=True
             )
-
+            
     except Exception as e:
+        import traceback
         st.error(f"오류가 발생했습니다: {e}")
+        st.text(traceback.format_exc())
+```

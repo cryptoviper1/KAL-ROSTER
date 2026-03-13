@@ -125,20 +125,27 @@ def parse_detailed_schedule(text):
     while i < len(lines):
         line = lines[i]
         
-        # 체크: 비행편명 (예: KE867, DH938, KE031)
-        if re.match(r'^[A-Z0-9]{2}\d{3,4}[A-Z]?$', line) and i + 5 < len(lines):
+        # 체크: 비행편명 또는 시뮬레이터명 (예: KE867, DH938, 78RECPC2)
+        if re.match(r'^[A-Z0-9]{2,8}$', line) and i + 4 < len(lines):
             flt = line
             dep = lines[i+1]
             std_str = lines[i+2]
             arr = lines[i+3]
             sta_str = lines[i+4]
-            ac = lines[i+5]
-            
-            # std_str 형태 확인 예: 2026-03-07 08:54
-            if re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$', std_str):
+            # 시뮬레이터는 기종(A/C) 필드가 생략될 수 있으므로, 날짜 패턴이 맞으면 비행편으로 인식
+            if re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$', std_str) and re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$', sta_str):
                 std_utc = get_utc_time(std_str, dep)
                 sta_utc = get_utc_time(sta_str, arr)
                 
+                # A/C 판별 (만약 다음 라인이 CAP/FO 같은 Rank면 A/C가 생략된 것)
+                ac = ""
+                idx = i + 5
+                if idx < len(lines) and lines[idx] not in ['CAP', 'FO', 'FS', 'CS', 'SS', 'PUR', 'INT', 'CC']:
+                    ac = lines[idx]
+                    i = idx + 1
+                else:
+                    i = idx
+                    
                 key = (flt, std_str)
                 if key not in flights_dict:
                     flights_dict[key] = {
@@ -154,7 +161,6 @@ def parse_detailed_schedule(text):
                         "crews": []
                     }
                 current_key = key
-                i += 6
                 continue
         
         # 비행편 내 크루 파싱 (현재 키가 있을 때만)
@@ -162,11 +168,18 @@ def parse_detailed_schedule(text):
             # Rank 키워드 등장 시 (CAP, FO, FS, CS 등 역할들. 주로 CAP, FO임)
             if line in ['CAP', 'FO', 'FS', 'CS', 'SS', 'PUR', 'INT', 'CC']:
                 rank = line
-                duty = lines[i+1] if i+1 < len(lines) else ""
+                idx = i + 1
                 
-                idx = i + 2
+                duty = ""
                 pic = ""
-                # P1, F1, P2 등
+                crew_id = ""
+                
+                # Duty 파싱 (FLY, TVL 등이 없는 시뮬레이터 세션 대응)
+                if idx < len(lines) and not re.match(r'^\d{6,7}$', lines[idx]) and not re.match(r'^[A-Z]\d{6}$', lines[idx]):
+                    duty = lines[idx]
+                    idx += 1
+                
+                # PIC 파싱 (P1, F2 등)
                 if idx < len(lines) and re.match(r'^[PF]\d$', lines[idx]):
                     pic = lines[idx]
                     idx += 1
@@ -174,8 +187,11 @@ def parse_detailed_schedule(text):
                     # 가끔 GDTVL 같은 코드가 나오는 경우 건너뜀
                     idx += 1
                     
-                crew_id = lines[idx] if idx < len(lines) else ""
-                idx += 1
+                # 사번 (Crew ID) 파싱
+                if idx < len(lines) and (re.match(r'^\d{6,7}$', lines[idx]) or re.match(r'^[A-Z]\d{6}$', lines[idx])):
+                    crew_id = lines[idx]
+                    idx += 1
+                    
                 name = lines[idx] if idx < len(lines) else ""
                 idx += 1
                 
@@ -183,8 +199,8 @@ def parse_detailed_schedule(text):
                 comment = ""
                 if idx < len(lines):
                     next_line = lines[idx]
-                    # 다음 줄이 직급(CAP, FO 등)이나 비행명(KE031)이 아니면 코멘트로 합침
-                    if next_line not in ['CAP', 'FO', 'FS', 'CS', 'SS', 'PUR', 'INT', 'CC', 'Flight/Activity'] and not re.match(r'^[A-Z0-9]{2}\d{3,4}[A-Z]?$', next_line):
+                    # 다음 줄이 직급(CAP, FO 등)이나 비행명/공항/날짜형식이 아니면 코멘트로 합침
+                    if next_line not in ['CAP', 'FO', 'FS', 'CS', 'SS', 'PUR', 'INT', 'CC', 'Flight/Activity'] and not re.match(r'^[A-Z0-9]{2,8}$', next_line) and not re.match(r'^[A-Z]{3}$', next_line) and not re.match(r'^\d{4}-\d{2}-\d{2}', next_line):
                         comment = next_line
                         idx += 1
                         
@@ -257,7 +273,7 @@ def parse_calendar_flights(text):
         if re.match(r'^\d{2}$', line):
             current_day = int(line)
         elif current_day is not None:
-            match = re.search(r'^([A-Z0-9]{2}\d{3,4})([A-Z]{3})\s*(?:\d{2}:\d{2})?\s*-\s*([A-Z]{3})', line)
+            match = re.search(r'^([A-Z0-9]{2,8})([A-Z]{3})\s*(?:\d{2}:\d{2})?\s*-\s*([A-Z]{3})', line)
             if match:
                 flt = match.group(1)
                 dep = match.group(2)
@@ -473,7 +489,10 @@ if st.button("🚀 캘린더 파일 변환하기", type="primary"):
                 sta_utc_str = f['sta_utc'].strftime('%H:%M') if f['sta_utc'] else "?"
                 
                 memo.append(f"{f['flt']}: {f['std_str']} (UTC {std_utc_str})")
-                memo.append(f"-> {f['sta_str']} (UTC {sta_utc_str}) (A/C: {f['ac']})")
+                if f['ac']:
+                    memo.append(f"-> {f['sta_str']} (UTC {sta_utc_str}) (A/C: {f['ac']})")
+                else:
+                    memo.append(f"-> {f['sta_str']} (UTC {sta_utc_str})")
                 memo.append(f"Block Time : {blk_dur}")
                 
                 if i < len(r)-1:

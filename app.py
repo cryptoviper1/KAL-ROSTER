@@ -80,7 +80,6 @@ def format_dur(delta):
     return f"{h}h {m:02d}m"
 
 def get_smart_date(base_date, input_day):
-    # base_date is datetime, input_day is int
     try:
         return base_date.replace(day=input_day, hour=0, minute=0, second=0, microsecond=0)
     except ValueError:
@@ -125,7 +124,6 @@ def parse_detailed_schedule(text):
     while i < len(lines):
         line = lines[i]
         
-        # 체크: 비행편명 (예: KE867, DH938, KE031)
         if re.match(r'^[A-Z0-9]{2}\d{3,4}[A-Z]?$', line) and i + 5 < len(lines):
             flt = line
             dep = lines[i+1]
@@ -134,7 +132,6 @@ def parse_detailed_schedule(text):
             sta_str = lines[i+4]
             ac = lines[i+5]
             
-            # std_str 형태 확인 예: 2026-03-07 08:54
             if re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$', std_str):
                 std_utc = get_utc_time(std_str, dep)
                 sta_utc = get_utc_time(sta_str, arr)
@@ -157,21 +154,17 @@ def parse_detailed_schedule(text):
                 i += 6
                 continue
         
-        # 비행편 내 크루 파싱 (현재 키가 있을 때만)
         if current_key:
-            # Rank 키워드 등장 시 (CAP, FO, FS, CS 등 역할들. 주로 CAP, FO임)
             if line in ['CAP', 'FO', 'FS', 'CS', 'SS', 'PUR', 'INT', 'CC']:
                 rank = line
                 duty = lines[i+1] if i+1 < len(lines) else ""
                 
                 idx = i + 2
                 pic = ""
-                # P1, F1, P2 등
                 if idx < len(lines) and re.match(r'^[PF]\d$', lines[idx]):
                     pic = lines[idx]
                     idx += 1
                 elif idx < len(lines) and lines[idx] in ['GDTVL', 'TVL']:
-                    # 가끔 GDTVL 같은 코드가 나오는 경우 건너뜀
                     idx += 1
                     
                 crew_id = lines[idx] if idx < len(lines) else ""
@@ -195,7 +188,6 @@ def parse_detailed_schedule(text):
     return sorted(flights_dict.values(), key=lambda x: x['std_utc'] if x['std_utc'] else UTC.localize(datetime.min))
 
 def parse_calendar_schedule(text):
-    # 달력 화면에서 RSV, STBY, DO 등을 추출
     events = []
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     
@@ -204,15 +196,12 @@ def parse_calendar_schedule(text):
         if re.match(r'^\d{2}$', line):
             current_day = int(line)
         elif current_day is not None:
-            # 예약 / 데이오프 / 스탠바이 등
+            # DO, ALM 등의 휴일은 무시하고 스탠바이나 리저브만 처리
             upper_line = line.upper()
             if 'RESERVE' in upper_line or 'RSV' in upper_line:
                 events.append({"type": "RSV", "day": current_day, "text": "Reserve"})
             elif 'STBY' in upper_line:
-                # STBY에 시간 정보가 있을 수 있음 (예: STBY 0900)
                 events.append({"type": "STBY", "day": current_day, "text": upper_line})
-            elif upper_line in ['DO', 'ALM', 'RDO', 'ATDO']:
-                events.append({"type": upper_line, "day": current_day, "text": upper_line})
                 
     return events
 
@@ -248,7 +237,6 @@ rank_choice = st.radio(
 is_cap = True if "CAP" in rank_choice else False
 
 st.markdown("---")
-# 텍스트 입력 칸
 cal_text = st.text_area("1️⃣ 마이스케줄 달력 화면 복붙 (리저브/스탠바이 파악용)", height=150, placeholder="여기에 달력 텍스트를 붙여넣으세요...")
 det_text = st.text_area("2️⃣ 상세 스케줄 HTML 화면 복붙 (비행 및 크루 파악용)", height=250, placeholder="여기에 비행 세부 텍스트를 붙여넣으세요...")
 
@@ -258,10 +246,8 @@ if st.button("🚀 캘린더 파일 변환하기", type="primary"):
         st.stop()
         
     try:
-        # 1. 비행 세부 파싱
         sorted_flights = parse_detailed_schedule(det_text) if det_text else []
         
-        # 로테이션 묶기
         rots = []
         t_rot = []
         for f in sorted_flights:
@@ -272,10 +258,8 @@ if st.button("🚀 캘린더 파일 변환하기", type="primary"):
                 rots.append(t_rot); t_rot = []
         if t_rot: rots.append(t_rot)
 
-        # 2. 달력 데이터 파싱
         cal_events = parse_calendar_schedule(cal_text) if cal_text else []
         
-        # 기준 날짜 구하기 (가장 첫 비행 기준, 없으면 현재 시간)
         if sorted_flights and sorted_flights[0]['std_kst']:
             base_date_ref = sorted_flights[0]['std_kst']
         else:
@@ -287,16 +271,13 @@ if st.button("🚀 캘린더 파일 변환하기", type="primary"):
         cnt_flt = len(rots)
         cnt_rsv = 0
         cnt_stby = 0
-        cnt_do = 0
 
-        # 달력 이벤트(리저브, STBY, DO 등) 추가
         flight_days = set([f['std_kst'].day for f in sorted_flights if f['std_kst']])
         
         for cev in cal_events:
             day = cev['day']
             ev_type = cev['type']
             
-            # 실제 스케줄(비행)이 있는 날짜에 달력의 ALM이나 DO가 겹치면 무시
             if day in flight_days and ev_type not in ['RSV', 'STBY']:
                 continue
 
@@ -311,27 +292,18 @@ if st.button("🚀 캘린더 파일 변환하기", type="primary"):
                 
             elif ev_type == 'STBY':
                 start_dt = target_date.replace(hour=9, minute=0, second=0)
-                end_dt = target_date.replace(hour=15, minute=0, second=0) # 임시
+                end_dt = target_date.replace(hour=15, minute=0, second=0)
                 
-                # STBY 0900 이런식으로 텍스트가 있다면 추출
                 time_match = re.search(r'(\d{4})', cev['text'])
                 if time_match:
                     hh = int(time_match.group(1)[:2])
                     mm = int(time_match.group(1)[2:])
                     start_dt = target_date.replace(hour=hh, minute=mm, second=0)
-                    end_dt = start_dt + timedelta(hours=6) # 기본 6시간 가정
+                    end_dt = start_dt + timedelta(hours=6)
                     
                 desc = "Standby Duty"
                 title = "STBY"
                 cnt_stby += 1
-                
-            else:
-                # DO, ALM 등 휴일
-                start_dt = target_date.replace(hour=0, minute=0, second=0)
-                end_dt = start_dt + timedelta(hours=23, minutes=59)
-                desc = f"Day Off ({ev_type})"
-                title = ev_type
-                cnt_do += 1
                 
             csv_rows.append({
                 "Subject": title,
@@ -340,17 +312,16 @@ if st.button("🚀 캘린더 파일 변환하기", type="primary"):
                 "End Date": end_dt.strftime('%Y-%m-%d'),
                 "End Time": end_dt.strftime('%H:%M'),
                 "Description": desc,
-                "Location": "ICN" if ev_type in ['RSV', 'STBY'] else "Home"
+                "Location": "ICN"
             })
             all_ics_events.append({
                 "subject": title,
                 "start_dt": start_dt,
                 "end_dt": end_dt,
                 "description": desc,
-                "location": "ICN" if ev_type in ['RSV', 'STBY'] else "Home"
+                "location": "ICN"
             })
 
-        # 비행 및 시뮬레이터 로테이션 추가
         for r in rots:
             f1, fL = r[0], r[-1]
             is_sim = any(k in f1['flt'].upper() for k in SIM_KEYWORDS)
@@ -444,9 +415,8 @@ if st.button("🚀 캘린더 파일 변환하기", type="primary"):
                 "location": f"{f1['dep']} -> {fL['arr']}"
             })
 
-        # 완료 표시
         st.success("✅ 완벽하게 변환되었습니다!")
-        st.caption(f"🗓️ 감지된 일정: 비행 로테이션 {cnt_flt}개 | 리저브 {cnt_rsv}개 | 스탠바이 {cnt_stby}개 | 휴일(DO/ALM) {cnt_do}개")
+        st.caption(f"🗓️ 감지된 일정: 비행 로테이션 {cnt_flt}개 | 리저브 {cnt_rsv}개 | 스탠바이 {cnt_stby}개")
         
         col_down1, col_down2 = st.columns(2)
         
